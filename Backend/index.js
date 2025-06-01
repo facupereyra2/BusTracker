@@ -128,6 +128,9 @@ app.get('/distance', async (req, res) => {
     departureTime: date.toISOString(),
   };
 
+  const cantidadParadas = requestBody.intermediates.length;
+  const minutosExtraPorParadas = cantidadParadas * 5;
+
   try {
     const routeRes = await axios.post("https://routes.googleapis.com/directions/v2:computeRoutes", requestBody, {
       headers: {
@@ -162,7 +165,7 @@ app.get('/distance', async (req, res) => {
 
     const busDelayFactor = 1.15;
     const duracionSeg = parseInt(routeRes.data.routes[0].duration.replace('s', ''));
-    const totalMin = Math.floor((duracionSeg / 60) * factorClima * dayAdjustmentFactor * busDelayFactor);
+    const totalMin = Math.floor((duracionSeg / 60) * factorClima * dayAdjustmentFactor * busDelayFactor) + minutosExtraPorParadas;
     const horas = Math.floor(totalMin / 60);
     const min = totalMin % 60;
 
@@ -183,7 +186,9 @@ app.get('/distance', async (req, res) => {
       🌦️ Clima: ${weather}, visibilidad ${visibility}m.<br>
       📅 Día: ${isWeekend ? 'Fin de semana' : 'Laboral'}${isHoliday ? ' y feriado' : ''}.<br>
       ⏱️ Ajustes aplicados: clima +${Math.round((factorClima - 1) * 100)}%, día +${Math.round((dayAdjustmentFactor - 1) * 100)}%.<br>
+      🚏 Paradas intermedias: ${cantidadParadas} (+${minutosExtraPorParadas} min)<br>
       📍 Última ubicación recibida: ${formattedDate}`,
+
       mapa: {
         currentLocation: { lat: location.lat, lng: location.lng },
         destinationCoord: destino,

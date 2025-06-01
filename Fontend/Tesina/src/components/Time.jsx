@@ -145,6 +145,7 @@ const Time = () => {
       const data = await response.json();
       setText(data.texto);
       setMapaData(data.mapa);
+      console.log("Mapa recibido:", data.mapa);
       setIsOpen(true);
     } catch (err) {
       console.error("Error backend:", err);
@@ -198,18 +199,12 @@ const Time = () => {
         Consultar ubicación del colectivo
       </Button>
 
-      <Modal
-        isOpen={isOpen}
-        onClose={() => setIsOpen(false)}
-        title='Resultado del cálculo'
-        text={<>
-          <span dangerouslySetInnerHTML={{ __html: text }} /><br />
-          {mapaData && <MapView {...mapaData} />}
-          
-          <br />
-        </>}
-        button='Cerrar'
-      />
+      <Modal isOpen={isOpen} onClose={() => setIsOpen(false)} title="Resultado del cálculo" button="Cerrar">
+        <span dangerouslySetInnerHTML={{ __html: text }} /><br />
+        {mapaData && <MapView {...mapaData} />}
+      </Modal>
+
+
     </Box>
   );
 };

@@ -1,5 +1,5 @@
-import React from 'react';
-import { MapContainer, TileLayer, Marker, Polyline } from 'react-leaflet';
+import React, { useEffect } from 'react';
+import { MapContainer, TileLayer, Marker, Polyline, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 
@@ -11,10 +11,21 @@ const busIcon = new L.Icon({
   popupAnchor: [0, -32]
 });
 
+const ResizeMap = () => {
+  const map = useMap();
+
+  useEffect(() => {
+    setTimeout(() => {
+      map.invalidateSize();
+    }, 100); // pequeño delay para asegurar que el modal ya se mostró
+  }, [map]);
+
+  return null;
+};
+
 const MapView = ({ currentLocation, destinationCoord, waypoints }) => {
   if (!currentLocation || !destinationCoord) return <p>No hay datos de ubicación</p>;
 
-  // Coordenadas de todos los puntos: inicio, waypoints y final
   const routePoints = [
     [currentLocation.lat, currentLocation.lng],
     ...waypoints.map(coord => {
@@ -25,25 +36,26 @@ const MapView = ({ currentLocation, destinationCoord, waypoints }) => {
       } else if ('lat' in coord && 'lng' in coord) {
         return [coord.lat, coord.lng];
       } else {
-        return [0, 0]; // fallback
+        return [0, 0];
       }
     }),
     [destinationCoord.latitude, destinationCoord.longitude]
   ];
-  
 
   return (
-    <div style={{ height: '70%', width: '90%', alignContent:'center', margin:'auto'}}>
-      <MapContainer center={[currentLocation.lat, currentLocation.lng]} zoom={8} scrollWheelZoom={false} style={{ height: '100%', width: '100%' }}>
+    <div style={{ height: '280px', width: '100%', margin: 'auto' }}>
+      <MapContainer
+        center={[currentLocation.lat, currentLocation.lng]}
+        zoom={8}
+        scrollWheelZoom={false}
+        style={{ height: '100%', width: '100%' }}
+      >
+        <ResizeMap />
         <TileLayer
           attribution='&copy; OpenStreetMap'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
-
-        {/* Marcador del colectivo actual */}
         <Marker position={[currentLocation.lat, currentLocation.lng]} icon={busIcon} />
-
-        {/* Línea que conecta todos los puntos */}
         <Polyline positions={routePoints} color="blue" />
       </MapContainer>
     </div>
