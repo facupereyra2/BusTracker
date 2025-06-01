@@ -162,7 +162,8 @@ const Location = () => {
         console.log("distance calc origin", origin);
         console.log("distance calc dest", destination)
         const apiKey = 'AIzaSyAfqRJA_z_ok5kPftimf-GL3yh7NUUJKdU';
-        const url = `/api/maps/api/distancematrix/json?origins=${origin}&destinations=${destination}&key=${apiKey}`;
+        const url = await fetch(`https://maps.googleapis.com/maps/api/distancematrix/json?origins=${origen}&destinations=${destino}&key=${tuApiKey}`);
+
         console.log(url)
         const response = await fetch(url);
         const data = await response.json();
