@@ -1,5 +1,7 @@
-const { initializeApp } = require('firebase/app');
-const { getDatabase } = require('firebase/database');
+// firebase/config.js (ES Modules)
+import { initializeApp } from 'firebase/app';
+import { getDatabase } from 'firebase/database';
+
 const firebaseConfig = {
   apiKey: "AIzaSyAXONWs47a2AumDGEPRsIX8tf7N4OXJU0g",
   authDomain: "tesina-418423.firebaseapp.com",
@@ -12,6 +14,4 @@ const firebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig);
-const db = getDatabase(app);
-module.exports = {db}
-
+export const db = getDatabase(app);

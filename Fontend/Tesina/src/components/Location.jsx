@@ -1,40 +1,52 @@
-import React, { useEffect, useState } from 'react'
-import firebase from 'firebase/compat/app';
+// Location.jsx
+import React, { useEffect, useState } from 'react';
 import app from '../firebaseConfig';
-import { getDatabase, ref, set, push, onValue, update, get } from 'firebase/database';
+import { getDatabase, ref, onValue, get } from 'firebase/database';
 import {
-    Menu,
-    MenuButton,
-    MenuList,
-    MenuItem,
-    Button,
-    Box,
-    Heading
+    Menu, MenuButton, MenuList, MenuItem,
+    Button, Box, Heading
 } from '@chakra-ui/react';
 import { ChevronDownIcon } from '@chakra-ui/icons';
 import Modal from './Modal';
 
 const Location = () => {
     const [cities, setCities] = useState([]);
-    const [selectedCityOrig, setSelectedCityOrig] = useState(''); // State para la ciudad seleccionada de origen
-    const [selectedCityOrigCoord, setSelectedCityOrigCoord] = useState(''); // State para la ciudad seleccionada de origen
-    const [selectedCityDest, setSelectedCityDest] = useState(''); // State para la ciudad seleccionada de destino
-    const [location, setLocation] = useState({
-        latitude: 0,
-        longitude: 0
-    });
-    const [schedules, setSchedules] = useState([]); // State para los horarios de la ciudad seleccionada
-    const [selectSchedule, setSelectSchedule] = useState(null); // State para el recorrido seleccionado
-    const [isTracking, setIsTracking] = useState(false); // State para controlar el seguimiento
-    const [isModalOpen, setIsModalOpen] = useState(false); //State para controlar el estado de la ventana modal
-    const [modalText, setModalText] = useState(''); // Mensaje dinámico
-    const [buttonText, setButtonText] = useState('')
-
+    const [selectedCityOrig, setSelectedCityOrig] = useState('');
+    const [selectedCityOrigCoord, setSelectedCityOrigCoord] = useState('');
+    const [selectedCityDest, setSelectedCityDest] = useState('');
+    const [availableDestinations, setAvailableDestinations] = useState([]);
+    const [location, setLocation] = useState({ latitude: 0, longitude: 0 });
+    const [schedules, setSchedules] = useState([]);
+    const [selectSchedule, setSelectSchedule] = useState(null);
+    const [isTracking, setIsTracking] = useState(false);
+    const [isModalOpen, setIsModalOpen] = useState(false);
+    const [modalText, setModalText] = useState('');
+    const [buttonText, setButtonText] = useState('');
 
     const closeModal = () => {
         setIsModalOpen(false);
-        setIsTracking(false)
+        setIsTracking(false);
     };
+
+    useEffect(() => {
+        const db = getDatabase(app);
+        const citiesRef = ref(db, "Cities");
+
+        const getCities = () => {
+            onValue(citiesRef, (snapshot) => {
+                const data = snapshot.val();
+                if (data) setCities(data);
+            });
+        };
+        getCities();
+    }, []);
+
+    useEffect(() => {
+        if (selectedCityOrig) {
+            getAvailableDestinations(selectedCityOrig);
+        }
+    }, [selectedCityOrig]);
+
     useEffect(() => {
         if (selectedCityOrig && selectedCityDest) {
             getCitiesOrder(selectedCityOrig, selectedCityDest);
@@ -42,33 +54,42 @@ const Location = () => {
     }, [selectedCityOrig, selectedCityDest]);
 
     useEffect(() => {
-        const db = getDatabase(app);
-        const citiesRef = ref(db, "Cities");
-
-        const getCities = () => { //Trae de la DB todas las cities ni bien carga la pagina
-            onValue(citiesRef, (snapshot) => {
-                const data = snapshot.val();
-                if (data) {
-                    setCities(data);
-                } else {
-                    console.log("No se encontraron datos");
-                }
-            });
-        };
-        getCities();
-    }, []);
-
-    useEffect(() => { //Continua guardando la ubicacion del user en la db mientras isTracking sea verdadero, es decir, que el modal este abierto
         let intervalId;
         if (isTracking) {
             intervalId = setInterval(() => {
                 getLocation();
-            }, 30000); // 60000 ms = 1 minuto
+            }, 30000);
         }
         return () => clearInterval(intervalId);
     }, [isTracking]);
 
+    const getAvailableDestinations = (originName) => {
+        const db = getDatabase(app);
+        const tableRef = ref(db, "Recorridos");
+        const destinationsSet = new Set();
 
+        onValue(tableRef, (snapshot) => {
+            const data = snapshot.val();
+            for (const recorrido in data) {
+                const citiesArray = data[recorrido].cities.filter(Boolean);
+                let originIndex = -1;
+
+                citiesArray.forEach((ciudad, index) => {
+                    const cityName = cities[ciudad.cityID]?.name;
+                    if (cityName === originName) originIndex = index;
+                });
+
+                if (originIndex !== -1) {
+                    for (let i = originIndex + 1; i < citiesArray.length; i++) {
+                        const cityName = cities[citiesArray[i].cityID]?.name;
+                        if (cityName) destinationsSet.add(cityName);
+                    }
+                }
+            }
+
+            setAvailableDestinations(Array.from(destinationsSet));
+        });
+    };
 
     const getLocation = () => {
         if (navigator.geolocation) {
@@ -83,16 +104,12 @@ const Location = () => {
                         saveLocation(selectedCityOrig, selectedCityOrigCoord, selectedCityDest, selectSchedule, newLocation);
                     }
                 },
-                (error) => {
-                    console.error(error.message);
-                }
+                (error) => console.error(error.message)
             );
         } else {
-            console.error('Geolocalización no es compatible en este navegador.');
+            console.error('Geolocalización no es compatible.');
         }
     };
-
-
 
     const getCitiesOrder = (originName, destinationName) => {
         const db = getDatabase(app);
@@ -102,8 +119,7 @@ const Location = () => {
         onValue(tableRef, (snapshot) => {
             const data = snapshot.val();
             for (const recorrido in data) {
-                const citiesArray = data[recorrido].cities.filter(Boolean); // Quitamos el null del principio
-
+                const citiesArray = data[recorrido].cities.filter(Boolean);
                 let originIndex = -1;
                 let destinationIndex = -1;
 
@@ -115,158 +131,47 @@ const Location = () => {
                 });
 
                 if (originIndex !== -1 && destinationIndex !== -1 && originIndex < destinationIndex) {
-                    allSchedules.push({
-                        hour: citiesArray[originIndex].hour,
-                        route: recorrido
-                    });
+                    allSchedules.push({ hour: citiesArray[originIndex].hour, route: recorrido });
                 }
             }
-
             setSchedules(allSchedules);
         });
     };
 
-
-    const getSchedules = async (recorrido) => { //Obtiene de la db el recorrido completo que le pasemos
-        const db = getDatabase(app)
-        try {
-            const locRef = ref(db, `Recorridos/${recorrido}`);
-            const snapshot = await get(locRef);
-
-            if (snapshot.exists()) {
-                return snapshot.val();
-            } else {
-                console.log("No se encontraron datos");
-                return null;
-            }
-        } catch (error) {
-            console.error('Error al obtener la ubicación:', error);
-            throw error;
-        }
-    };
-
-    const waypointsCalc = async (origin, paradas) => { //Calcula si ya paso por los puntos intermedios
-        for (const i in paradas) {
-            console.log("paradas", paradas[i])
-            const distance = await distanceCalc(origin, paradas[i]);
-            console.log(i, distance)
-            if (distance < 800) { //Si la distancia actual es menor a 800 metros de alguno de los puntos intermedios restantes, lo elimina del array
-                paradas.splice(0, parseInt(i) + 1)
-            }
-
-        }
-        return paradas
-    }
-
-    const distanceCalc = async (origin, destination) => { //Calcula la distancia entre un punto y otro mediante la API, se uitliza en la funcion wayPointsCalc
-        console.log("distance calc origin", origin);
-        console.log("distance calc dest", destination)
-        const apiKey = 'AIzaSyAfqRJA_z_ok5kPftimf-GL3yh7NUUJKdU';
-        const url = await fetch(`https://maps.googleapis.com/maps/api/distancematrix/json?origins=${origen}&destinations=${destino}&key=${tuApiKey}`);
-
-        console.log(url)
-        const response = await fetch(url);
-        const data = await response.json();
-        //console.log(data.rows[0].elements[0].distance.value)
-        return data.rows[0].elements[0].distance.value;
-    };
-
-    const getCityCoordsByName = async (cityName) => {
-        const db = getDatabase(app);
-        const citiesRef = ref(db, 'Cities');
-    
-        try {
-            const snapshot = await get(citiesRef);
-            if (snapshot.exists()) {
-                const data = snapshot.val();
-    
-                for (const cityID in data) {
-                    if (data[cityID].name === cityName) {
-                        return data[cityID].coord;
-                    }
-                }
-    
-                console.warn('Ciudad no encontrada:', cityName);
-                return null;
-            } else {
-                console.warn('No se encontraron ciudades en la base de datos.');
-                return null;
-            }
-        } catch (error) {
-            console.error('Error al obtener coordenadas:', error);
-            return null;
-        }
-    };
-
-
-
     const saveLocation = async (origin, preOriginCoord, destination, schedule, location) => {
-        const db = getDatabase(app);
-        const date = new Date().toISOString();
+        try {
+            const response = await fetch("http://localhost:3000/location", {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    origin,
+                    destination,
+                    schedule,
+                    currentLocation: location,
+                    preOriginCoord
+                })
+            });
 
-        const allWaypoints = await getSchedules(schedule);
-        const citiesArray = allWaypoints.cities.filter(Boolean); // saca el null inicial
-        const sortedWaypoints = citiesArray.sort((a, b) => a.order - b.order);
+            const result = await response.json();
 
-        const allWaypointsSorted = sortedWaypoints.map(entry => {
-            const cityData = cities[entry.cityID];
-            return cityData?.coord || null;
-        }).filter(Boolean); // elimina coordenadas nulas
-
-        // Validar que esté cerca de alguna ciudad
-        let isNearAnyCity = false;
-        const destinationCoord = await getCityCoordsByName(origin)
-
-        const distance = parseInt(await distanceCalc(`${location.latitude},${location.longitude}`,destinationCoord));
-        console.log("first", distance)
-        if (distance < 15000) {
-            isNearAnyCity = true;
-        }
-
-
-
-        if (!isNearAnyCity) {
-            console.warn("Ubicación inválida: demasiado lejos de la ruta.");
-            setModalText("No se puede compartir ubicación porque estás demasiado lejos del recorrido.");
-            setButtonText("Aceptar")
+            if (response.ok) {
+                setModalText("Su ubicación actual está siendo compartida de forma exitosa.");
+                setButtonText("Dejar de compartir");
+                setIsModalOpen(true);
+            } else {
+                setModalText(result.error || "Hubo un error al guardar la ubicación.");
+                setButtonText("Aceptar");
+                setIsModalOpen(true);
+                setIsTracking(false);
+            }
+        } catch (error) {
+            console.error("Error al contactar backend:", error);
+            setModalText("Error de conexión con el servidor.");
+            setButtonText("Aceptar");
             setIsModalOpen(true);
             setIsTracking(false);
-            return;
         }
-
-        // Calcular waypoints pendientes
-        const prePendWaypoints = await waypointsCalc(preOriginCoord, allWaypointsSorted);
-        const pendWaypoints = await waypointsCalc(`${location.latitude},${location.longitude}`, prePendWaypoints);
-
-        console.log('Waypoints pendientes:', pendWaypoints);
-
-        // Crear ID único para todo el recorrido (sin espacios)
-        const uniqueId = `${schedule}`.replace(/\s+/g, '');
-        const newDocRef = ref(db, `location/${uniqueId}`);
-
-        // Guardar en Firebase
-        set(newDocRef, {
-            origin,
-            destination,
-            location,
-            date,
-            schedule,
-            waypoints: pendWaypoints,
-        })
-            .then(() => {
-                console.log('Ubicación guardada exitosamente');
-                setModalText("Su ubicación actual está siendo compartida de forma exitosa.");
-                setButtonText("Dejar de compartir")
-                setIsModalOpen(true);
-            })
-            .catch((error) => {
-                console.error('Error al guardar la ubicación:', error);
-                setModalText("Hubo un error al guardar la ubicación. Intente nuevamente.");
-                setButtonText("Aceptar")
-                setIsModalOpen(true);
-            });
     };
-
 
     const containerStyles = {
         bg: "brand.bg",
@@ -293,7 +198,6 @@ const Location = () => {
     const menuItemStyles = {
         color: "black"
     };
-
 
     return (
         <>
@@ -325,17 +229,16 @@ const Location = () => {
                             {selectedCityDest || 'Selecciona su ciudad de destino'}
                         </MenuButton>
                         <MenuList>
-                            {Object.keys(cities).map((city) => (
+                            {availableDestinations.map((dest, index) => (
                                 <MenuItem
                                     sx={menuItemStyles}
-                                    key={city}
+                                    key={index}
                                     onClick={() => {
-                                        setSelectedCityDest(cities[city].name);
-                                        getCitiesOrder(selectedCityOrig, selectedCityDest)
-
+                                        setSelectedCityDest(dest);
+                                        getCitiesOrder(selectedCityOrig, dest);
                                     }}
                                 >
-                                    {cities[city].name}
+                                    {dest}
                                 </MenuItem>
                             ))}
                         </MenuList>
@@ -368,6 +271,6 @@ const Location = () => {
             </Box>
         </>
     );
-}
+};
 
 export default Location;

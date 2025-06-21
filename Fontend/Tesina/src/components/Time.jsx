@@ -141,7 +141,20 @@ const Time = () => {
     });
 
     try {
-      const response = await fetch(`https://bustracker-kfkx.onrender.com/distance?${queryParams.toString()}`);
+      const response = await fetch(`http://localhost:3000/distance?${queryParams.toString()}`);
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        if (errorData.error === 'El colectivo ya pasó por tu ciudad.') {
+          setText(`<strong>${errorData.error}</strong>`);
+          setMapaData(null);
+          setIsOpen(true);
+          return;
+        } else {
+          throw new Error(errorData.error || 'Error inesperado');
+        }
+      }
+
       const data = await response.json();
       setText(data.texto);
       setMapaData(data.mapa);
@@ -149,7 +162,11 @@ const Time = () => {
       setIsOpen(true);
     } catch (err) {
       console.error("Error backend:", err);
+      setText(`<strong>Hubo un error al consultar la ubicación.</strong><br>${err.message}`);
+      setMapaData(null);
+      setIsOpen(true);
     }
+
   };
 
   return (
