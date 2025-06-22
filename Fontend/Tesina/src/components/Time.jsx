@@ -146,7 +146,7 @@ const Time = () => {
       if (!response.ok) {
         const errorData = await response.json();
         if (errorData.error === 'El colectivo ya pasó por tu ciudad.') {
-          setText(`<strong>${errorData.error}</strong>`);
+          setText(`${errorData.error}`);
           setMapaData(null);
           setIsOpen(true);
           return;
@@ -162,7 +162,7 @@ const Time = () => {
       setIsOpen(true);
     } catch (err) {
       console.error("Error backend:", err);
-      setText(`<strong>Hubo un error al consultar la ubicación.</strong><br>${err.message}`);
+      setText(`Hubo un error al consultar la ubicación.<br>${err.message}`);
       setMapaData(null);
       setIsOpen(true);
     }

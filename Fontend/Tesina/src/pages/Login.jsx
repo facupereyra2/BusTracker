@@ -65,11 +65,11 @@ const Login = () => {
           <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="********" size="lg" bg="gray.700" color="white" />
         </FormControl>
 
-        <Button bg="brand.blue" size="lg" width="full" isLoading={loading} loadingText="Iniciando..." onClick={handleLogin}>
+        <Button bg="brand.blue" size="lg" width="full" color='white' isLoading={loading} loadingText="Iniciando..." onClick={handleLogin}>
           Iniciar sesión
         </Button>
 
-        <Button mt={4} bg="brand.orange" size="lg" width="full" onClick={() => navigate("/register")}>
+        <Button mt={4} bg="brand.orange" size="lg" color='white' width="full" onClick={() => navigate("/register")}>
           Crear cuenta
         </Button>
       </Box>
