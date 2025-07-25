@@ -58,7 +58,7 @@ const Location = () => {
         if (isTracking) {
             intervalId = setInterval(() => {
                 getLocation();
-            }, 30000);
+            }, 500);
         }
         return () => clearInterval(intervalId);
     }, [isTracking]);
@@ -140,7 +140,7 @@ const Location = () => {
 
     const saveLocation = async (origin, preOriginCoord, destination, schedule, location) => {
         try {
-            const response = await fetch("https://bustracker-kfkx.onrender.com/location", {
+            const response = await fetch("http://localhost:3000/location", {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({

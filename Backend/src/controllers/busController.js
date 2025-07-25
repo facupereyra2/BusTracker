@@ -6,12 +6,13 @@ import {
 } from '../services/busServices.js'
 import { getHolidays } from '../utils/holiday.js';
 import axios from 'axios';
-import { ref, set } from 'firebase/database';
+import { ref, set, get } from 'firebase/database';
 import { db } from '../firebase/config.js';
 import { distanceCalc } from '../utils/distance.js';
 
 
 export const obtenerTiempoEstimado = async (req, res) => {
+  console.log('entro al backend')
   const { recorridoID, ciudadObjetivo } = req.query;
   const location = await getLocation(recorridoID);
 
@@ -130,17 +131,21 @@ export const guardarUbicacion = async (req, res) => {
     if (!originCoord) {
       return res.status(400).json({ error: 'Ciudad origen no encontrada.' });
     }
+    const alreadyExists = await get(ref(db, `location/${schedule}`));
+    if (!alreadyExists.exists()) {
+      // solo si es la primera vez se valida la distancia
+      const distanciaMetros = await distanceCalc(
+        `${currentLocation.latitude},${currentLocation.longitude}`,
+        `${originCoord.latitude},${originCoord.longitude}`
+      );
 
-    const distanciaMetros = await distanceCalc(
-      `${currentLocation.latitude},${currentLocation.longitude}`,
-      `${originCoord.latitude},${originCoord.longitude}`
-    );
-
-    if (distanciaMetros > 15000) {
-      return res.status(400).json({
-        error: 'Estás demasiado lejos del punto de origen del colectivo. No se puede compartir ubicación.'
-      });
+      if (distanciaMetros > 15000) {
+        return res.status(400).json({
+          error: 'Estás demasiado lejos del punto de origen del colectivo. No se puede compartir ubicación.'
+        });
+      }
     }
+
 
     const date = new Date().toISOString();
     const uniqueId = `${schedule}`.replace(/\s+/g, '');

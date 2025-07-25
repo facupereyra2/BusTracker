@@ -135,13 +135,16 @@ const Time = () => {
     const fullRoute = await getFullRoute(selectedOrig, selectedDest, selectedSchedule);
     if (!fullRoute) return;
 
+    console.log("first")
+
     const queryParams = new URLSearchParams({
       recorridoID: fullRoute.key,
       ciudadObjetivo: selectedOrig
     });
+    console.log(queryParams)
 
     try {
-      const response = await fetch(`https://bustracker-kfkx.onrender.com/distance?${queryParams.toString()}`);
+      const response = await fetch(`http://localhost:3000/distance?${queryParams.toString()}`);
 
       if (!response.ok) {
         const errorData = await response.json();

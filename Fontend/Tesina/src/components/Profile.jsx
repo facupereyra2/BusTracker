@@ -9,7 +9,7 @@ const Profile = () => {
 
   const handleLogout = async () => {
     await signOut(auth);
-    navigate("/login"); // Redirige al login después de cerrar sesión
+    navigate("/login");
   };
 
   return (
@@ -18,7 +18,7 @@ const Profile = () => {
       display="flex" 
       alignItems="center" 
       justifyContent="center" 
-      bg="brand.bg" // Fondo oscuro
+      bg="brand.bg"
     >
       <VStack spacing={6} bg="gray.800" p={8} borderRadius="lg" boxShadow="lg" width="400px">
         <Heading color="white">Perfil</Heading>
