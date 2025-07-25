@@ -99,10 +99,10 @@ const Location = () => {
                         latitude: position.coords.latitude,
                         longitude: position.coords.longitude
                     };
-                    if (newLocation.latitude !== location.latitude || newLocation.longitude !== location.longitude) {
+                
                         setLocation(newLocation);
                         saveLocation(selectedCityOrig, selectedCityOrigCoord, selectedCityDest, selectSchedule, newLocation);
-                    }
+                    
                 },
                 (error) => console.error(error.message)
             );
