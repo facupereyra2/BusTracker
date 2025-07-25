@@ -58,7 +58,7 @@ const Location = () => {
         if (isTracking) {
             intervalId = setInterval(() => {
                 getLocation();
-            }, 500);
+            }, 50);
         }
         return () => clearInterval(intervalId);
     }, [isTracking]);
