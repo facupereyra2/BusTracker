@@ -144,7 +144,7 @@ const Time = () => {
     console.log(queryParams)
 
     try {
-      const response = await fetch(`http://localhost:3000/distance?${queryParams.toString()}`);
+      const response = await fetch(`https://bustracker-kfkx.onrender.com/distance?${queryParams.toString()}`);
 
       if (!response.ok) {
         const errorData = await response.json();
