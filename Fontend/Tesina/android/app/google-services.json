@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "874151633181",
+    "firebase_url": "https://tesina-418423-default-rtdb.firebaseio.com",
+    "project_id": "tesina-418423",
+    "storage_bucket": "tesina-418423.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:874151633181:android:89e66956c706c784d881f4",
+        "android_client_info": {
+          "package_name": "com.bustracker.tesina"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCa88o_A1r_AOF_yW68P3-uFoIfOBlCnOc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

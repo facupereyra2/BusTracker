@@ -10,6 +10,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@capacitor/android": "^7.4.2",
+    "@capacitor/cli": "^7.4.2",
+    "@capacitor/core": "^7.4.2",
+    "@capacitor/geolocation": "^7.1.4",
     "@chakra-ui/icons": "^2.1.1",
     "@chakra-ui/react": "^2.10.5",
     "@emotion/react": "^11.14.0",

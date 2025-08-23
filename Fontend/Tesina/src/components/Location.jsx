@@ -1,13 +1,18 @@
 // Location.jsx
 import React, { useEffect, useState } from 'react';
 import app from '../firebaseConfig';
-import { getDatabase, ref, onValue, get } from 'firebase/database';
+import { getDatabase, ref, onValue } from 'firebase/database';
 import {
     Menu, MenuButton, MenuList, MenuItem,
     Button, Box, Heading
 } from '@chakra-ui/react';
 import { ChevronDownIcon } from '@chakra-ui/icons';
 import Modal from './Modal';
+import { Capacitor } from '@capacitor/core';
+import { Geolocation } from '@capacitor/geolocation';
+import { BackgroundLocationServiceInterface } from './backgroundLocationPlugin';
+
+
 
 const Location = () => {
     const [cities, setCities] = useState([]);
@@ -15,7 +20,6 @@ const Location = () => {
     const [selectedCityOrigCoord, setSelectedCityOrigCoord] = useState('');
     const [selectedCityDest, setSelectedCityDest] = useState('');
     const [availableDestinations, setAvailableDestinations] = useState([]);
-    const [location, setLocation] = useState({ latitude: 0, longitude: 0 });
     const [schedules, setSchedules] = useState([]);
     const [selectSchedule, setSelectSchedule] = useState(null);
     const [isTracking, setIsTracking] = useState(false);
@@ -28,17 +32,72 @@ const Location = () => {
         setIsTracking(false);
     };
 
+    async function requestAllLocationPermissions() {
+        try {
+            const status = await Geolocation.requestPermissions();
+            return status.location === 'granted';
+        } catch (error) {
+            console.error('Error pidiendo permisos:', error);
+            return false;
+        }
+    }
+    console.log('Plugin nativo BackgroundLocationServiceInterface:', BackgroundLocationServiceInterface);
+
+
+
+    const startTracking = async () => {
+        try {
+            const hasPermissions = await requestAllLocationPermissions();
+
+            if (!hasPermissions) {
+                setModalText("Por favor habilitá los permisos de ubicación, incluyendo ubicación en segundo plano.");
+                setButtonText("Aceptar");
+                setIsModalOpen(true);
+                return;
+            }
+
+            await BackgroundLocationServiceInterface.startService({
+                origin: selectedCityOrig,
+                destination: selectedCityDest,
+                schedule: selectSchedule,
+                preOriginCoord: selectedCityOrigCoord
+            });
+
+            setIsTracking(true);
+            setModalText("Su ubicación actual está siendo compartida de forma exitosa.");
+            setButtonText("Dejar de compartir");
+            setIsModalOpen(true);
+        } catch (error) {
+            console.error("Error al iniciar el tracking:", error);
+            setModalText("Hubo un error al iniciar el seguimiento. " + (error?.message || ""));
+            setButtonText("Aceptar");
+            setIsModalOpen(true);
+            setIsTracking(false);
+        }
+    };
+
+
+    const stopTracking = async () => {
+        try {
+            await BackgroundLocationServiceInterface.stopService();
+
+            setIsTracking(false);
+            setModalText("Has dejado de compartir tu ubicación.");
+            setButtonText("Aceptar");
+            setIsModalOpen(true);
+        } catch (error) {
+            console.error("Error al detener el tracking:", error);
+        }
+    };
+
+    // Lógica para obtener las ciudades, destinos y horarios
     useEffect(() => {
         const db = getDatabase(app);
         const citiesRef = ref(db, "Cities");
-
-        const getCities = () => {
-            onValue(citiesRef, (snapshot) => {
-                const data = snapshot.val();
-                if (data) setCities(data);
-            });
-        };
-        getCities();
+        onValue(citiesRef, (snapshot) => {
+            const data = snapshot.val();
+            if (data) setCities(data);
+        });
     }, []);
 
     useEffect(() => {
@@ -53,32 +112,19 @@ const Location = () => {
         }
     }, [selectedCityOrig, selectedCityDest]);
 
-    useEffect(() => {
-        let intervalId;
-        if (isTracking) {
-            intervalId = setInterval(() => {
-                getLocation();
-            }, 50);
-        }
-        return () => clearInterval(intervalId);
-    }, [isTracking]);
-
     const getAvailableDestinations = (originName) => {
         const db = getDatabase(app);
         const tableRef = ref(db, "Recorridos");
         const destinationsSet = new Set();
-
         onValue(tableRef, (snapshot) => {
             const data = snapshot.val();
             for (const recorrido in data) {
                 const citiesArray = data[recorrido].cities.filter(Boolean);
                 let originIndex = -1;
-
                 citiesArray.forEach((ciudad, index) => {
                     const cityName = cities[ciudad.cityID]?.name;
                     if (cityName === originName) originIndex = index;
                 });
-
                 if (originIndex !== -1) {
                     for (let i = originIndex + 1; i < citiesArray.length; i++) {
                         const cityName = cities[citiesArray[i].cityID]?.name;
@@ -86,91 +132,32 @@ const Location = () => {
                     }
                 }
             }
-
             setAvailableDestinations(Array.from(destinationsSet));
         });
-    };
-
-    const getLocation = () => {
-        if (navigator.geolocation) {
-            navigator.geolocation.getCurrentPosition(
-                (position) => {
-                    const newLocation = {
-                        latitude: position.coords.latitude,
-                        longitude: position.coords.longitude
-                    };
-                
-                        setLocation(newLocation);
-                        saveLocation(selectedCityOrig, selectedCityOrigCoord, selectedCityDest, selectSchedule, newLocation);
-                    
-                },
-                (error) => console.error(error.message)
-            );
-        } else {
-            console.error('Geolocalización no es compatible.');
-        }
     };
 
     const getCitiesOrder = (originName, destinationName) => {
         const db = getDatabase(app);
         const allSchedules = [];
         const tableRef = ref(db, "Recorridos");
-
         onValue(tableRef, (snapshot) => {
             const data = snapshot.val();
             for (const recorrido in data) {
                 const citiesArray = data[recorrido].cities.filter(Boolean);
                 let originIndex = -1;
                 let destinationIndex = -1;
-
                 citiesArray.forEach((ciudad, index) => {
                     const cityID = ciudad.cityID;
                     const cityName = cities[cityID]?.name;
                     if (cityName === originName) originIndex = index;
                     if (cityName === destinationName) destinationIndex = index;
                 });
-
                 if (originIndex !== -1 && destinationIndex !== -1 && originIndex < destinationIndex) {
                     allSchedules.push({ hour: citiesArray[originIndex].hour, route: recorrido });
                 }
             }
             setSchedules(allSchedules);
         });
-    };
-
-    const saveLocation = async (origin, preOriginCoord, destination, schedule, location) => {
-        try {
-            const response = await fetch("https://bustracker-kfkx.onrender.com/location", {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    origin,
-                    destination,
-                    schedule,
-                    currentLocation: location,
-                    preOriginCoord
-                })
-            });
-
-            const result = await response.json();
-
-            if (response.ok) {
-                setModalText("Su ubicación actual está siendo compartida de forma exitosa.");
-                setButtonText("Dejar de compartir");
-                setIsModalOpen(true);
-            } else {
-                setModalText(result.error || "Hubo un error al guardar la ubicación.");
-                setButtonText("Aceptar");
-                setIsModalOpen(true);
-                setIsTracking(false);
-            }
-        } catch (error) {
-            console.error("Error al contactar backend:", error);
-            setModalText("Error de conexión con el servidor.");
-            setButtonText("Aceptar");
-            setIsModalOpen(true);
-            setIsTracking(false);
-        }
     };
 
     const containerStyles = {
@@ -202,7 +189,7 @@ const Location = () => {
     return (
         <>
             <Box sx={containerStyles}>
-                <Heading mb={6} fontSize='2xl' textAlign='center'>Selecciona tu ruta</Heading>
+                <Heading mb={6} fontSize='2xl' textAlign='center'>Selecciona tu ruta (v1)</Heading>
                 <Box sx={{ width: '100%' }}>
                     <Menu width='500px'>
                         <MenuButton as={Button} rightIcon={<ChevronDownIcon />} sx={menuButtonStyles}>
@@ -244,7 +231,6 @@ const Location = () => {
                         </MenuList>
                     </Menu>
                 </Box>
-
                 <Box sx={{ width: '100%' }}>
                     <Menu>
                         <MenuButton as={Button} rightIcon={<ChevronDownIcon />} sx={menuButtonStyles}>
@@ -263,11 +249,30 @@ const Location = () => {
                         </MenuList>
                     </Menu>
                 </Box>
-
-                <Button onClick={() => { getLocation(); setIsTracking(true); }} colorScheme="orange" width='80vw'>
-                    Compartir ubicación
+                <Button onClick={() => {
+                    if (!selectedCityOrig || !selectedCityDest || !selectSchedule) {
+                        setModalText("Por favor seleccioná origen, destino y horario antes de compartir.");
+                        setButtonText("Aceptar");
+                        setIsModalOpen(true);
+                        return;
+                    }
+                    if (isTracking) {
+                        stopTracking();
+                    } else {
+                        startTracking();
+                    }
+                }}
+                    colorScheme={isTracking ? "red" : "orange"}
+                    width="80vw"
+                >
+                    {isTracking ? "Dejar de compartir ubicación" : "Compartir ubicación"}
                 </Button>
-                <Modal title={modalText} button={buttonText} isOpen={isModalOpen} onClose={closeModal} />
+                <Modal
+                    title={modalText}
+                    button={buttonText}
+                    isOpen={isModalOpen}
+                    onClose={buttonText === "Dejar de compartir" ? stopTracking : closeModal}
+                />
             </Box>
         </>
     );

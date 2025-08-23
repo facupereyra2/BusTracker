@@ -1,0 +1,10 @@
+{
+  "appId": "com.bustracker.tesina",
+  "appName": "BusTracker",
+  "webDir": "dist",
+  "plugins": {
+    "BackgroundLocationServiceInterface": {
+      "package": "com.bustracker.tesina.location.BackgroundLocationPlugin"
+    }
+  }
+}
