@@ -12,10 +12,12 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
     const { locations } = data;
     const location = locations[0];
     // Aquí puedes guardar la ubicación en Firebase
-    await push(ref(db, 'locations'), {
-      latitude: location.coords.latitude,
-      longitude: location.coords.longitude,
-      timestamp: Date.now(),
+    await push(ref(db, 'location'), {
+      location:{
+        latitude: location.coords.latitude,
+        longitude: location.coords.longitude,
+      },
+      date: Date.now(),
     });
   }
 });

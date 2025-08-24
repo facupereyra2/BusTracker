@@ -1,7 +1,7 @@
-import { get, onValue, ref } from 'firebase/database';
-import { Box, Button, CheckIcon, Modal, Select, Spinner, Text, VStack } from 'native-base';
-import { useEffect, useState } from 'react';
-import MapView, { Marker, Polyline } from 'react-native-maps';
+import { get, ref } from 'firebase/database';
+import React, { useEffect, useState } from 'react';
+import { ActivityIndicator, Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import RNPickerSelect from 'react-native-picker-select';
 import { db } from '../constants/firebaseConfig';
 
 const Time = () => {
@@ -9,282 +9,353 @@ const Time = () => {
   const [selectedOrig, setSelectedOrig] = useState('');
   const [selectedDest, setSelectedDest] = useState('');
   const [selectedSchedule, setSelectedSchedule] = useState('');
-  const [selectSchedule, setSelectSchedule] = useState([]);
   const [availableDestinations, setAvailableDestinations] = useState([]);
+  const [selectSchedule, setSelectSchedule] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [resultText, setResultText] = useState('');
-  const [mapaData, setMapaData] = useState(null);
-  const [modalOpen, setModalOpen] = useState(false);
+  const [modalVisible, setModalVisible] = useState(false);
+  const [resultado, setResultado] = useState('');
 
-  // Cargar ciudades desde Firebase
+  // Cargar ciudades
   useEffect(() => {
-  const citiesRef = ref(db, "Cities");
-  onValue(
-    citiesRef,
-    (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        const citiesArray = Object.keys(data).map(key => ({
-          id: key,
-          name: data[key].name,
-          coord: data[key].coord,
-        }));
-        setCities(citiesArray);
-      } else {
-        console.log('No data found in Cities');
-      }
-    },
-    (error) => {
-      console.log('Firebase error:', error);
-    }
-  );
-}, []);
+    const citiesRef = ref(db, 'Cities');
+    get(citiesRef)
+      .then(snapshot => {
+        const data = snapshot.val();
+        if (data) {
+          const citiesArray = Object.keys(data).map(key => ({
+            id: key,
+            name: data[key].name
+          }));
+          setCities(citiesArray);
+        }
+      })
+      .catch(error => console.error('Error al obtener las ciudades:', error));
+  }, []);
 
-  // Obtener destinos disponibles según origen
+  // Obtener destinos según origen
   useEffect(() => {
-    if (!selectedOrig || cities.length === 0) {
+    if (!selectedOrig) {
       setAvailableDestinations([]);
       setSelectedDest('');
       setSelectSchedule([]);
-      setSelectedSchedule('');
       return;
     }
-    const recorridosRef = ref(db, "Recorridos");
+
+    const recorridosRef = ref(db, 'Recorridos');
     get(recorridosRef).then(snapshot => {
       const data = snapshot.val();
       const availableDestinationsList = [];
-      const originID = cities.find(city => city.name === selectedOrig)?.id;
-      for (const recorridoKey in data) {
-        const recorrido = data[recorridoKey];
+      for (const key in data) {
+        const recorrido = data[key];
         const citiesOrder = recorrido.cities.filter(city => city && city.cityID);
-        const originIndex = citiesOrder.findIndex(city => city.cityID === originID);
+
+        const originIndex = citiesOrder.findIndex(city => city.cityID === selectedOrig);
         if (originIndex !== -1) {
-          const possibleDestinations = citiesOrder.slice(originIndex + 1).map(city => {
-            return cities.find(c => c.id === city.cityID)?.name;
-          });
+          const possibleDestinations = citiesOrder
+            .slice(originIndex + 1)
+            .map(city => city.cityID);
           availableDestinationsList.push(...possibleDestinations);
         }
       }
       setAvailableDestinations([...new Set(availableDestinationsList)]);
-      setSelectedDest('');
-      setSelectSchedule([]);
-      setSelectedSchedule('');
     });
-  }, [selectedOrig, cities]);
+  }, [selectedOrig]);
 
-  // Obtener horarios según origen y destino
+  // Obtener horarios
   useEffect(() => {
-    if (!selectedOrig || !selectedDest || cities.length === 0) {
+    if (!selectedOrig || !selectedDest) {
       setSelectSchedule([]);
-      setSelectedSchedule('');
       return;
     }
-    const recorridosRef = ref(db, "Recorridos");
+
+    const recorridosRef = ref(db, 'Recorridos');
     get(recorridosRef).then(snapshot => {
       const data = snapshot.val();
-      let schedulesArray = [];
-      const originID = cities.find(city => city.name === selectedOrig)?.id;
-      const destinationID = cities.find(city => city.name === selectedDest)?.id;
-      for (const recorridoKey in data) {
-        const recorrido = data[recorridoKey];
+      const schedulesArray = [];
+
+      for (const key in data) {
+        const recorrido = data[key];
         const citiesOrder = recorrido.cities.filter(city => city && city.cityID);
-        const originIndex = citiesOrder.findIndex(city => city.cityID === originID);
-        const destinationIndex = citiesOrder.findIndex(city => city.cityID === destinationID);
+
+        const originIndex = citiesOrder.findIndex(city => city.cityID === selectedOrig);
+        const destinationIndex = citiesOrder.findIndex(city => city.cityID === selectedDest);
+
         if (originIndex !== -1 && destinationIndex !== -1 && originIndex < destinationIndex) {
           schedulesArray.push({
+            id: `${key}_${citiesOrder[originIndex].hour}`,
             originTime: citiesOrder[originIndex].hour,
             destinationTime: citiesOrder[destinationIndex].hour,
-            routeKey: recorridoKey,
+            recorridoID: key
           });
         }
       }
       setSelectSchedule(schedulesArray);
-      setSelectedSchedule('');
     });
-  }, [selectedOrig, selectedDest, cities]);
+  }, [selectedOrig, selectedDest]);
 
-  // Buscar el recorrido y llamar al backend
+  // Buscar nombre por ID
+  const getCityNameById = (id) => {
+    const city = cities.find(city => city.id === id);
+    return city ? city.name : '';
+  };
+
+  // Recibe IDs y hora de origen
+  const getFullRoute = async (originID, destinationID, originTime) => {
+    const recorridosRef = ref(db, "Recorridos");
+    const snapshot = await get(recorridosRef);
+
+    if (snapshot.exists()) {
+      const data = snapshot.val();
+      for (const recorridoKey in data) {
+        const recorrido = data[recorridoKey];
+        const citiesOrder = recorrido.cities.filter(city => city !== null && city.cityID);
+
+        const originIndex = citiesOrder.findIndex(city => city.cityID === originID && city.hour === originTime);
+        const destinationIndex = citiesOrder.findIndex(city => city.cityID === destinationID);
+
+        if (originIndex !== -1 && destinationIndex !== -1 && originIndex < destinationIndex) {
+          return {
+            key: recorridoKey,
+            origin: originID,
+            destination: destinationID,
+            citiesOrder
+          };
+        }
+      }
+    }
+    return null;
+  };
+
+  // Consultar ubicación
   const fetchLocation = async () => {
-    if (!selectedOrig || !selectedDest || !selectedSchedule) {
-      setResultText("Por favor seleccioná origen, destino y horario.");
-      setMapaData(null);
-      setModalOpen(true);
+    if (cities.length === 0) {
+      setResultado("Las ciudades aún no se cargaron. Esperá unos segundos.");
+      setModalVisible(true);
       return;
     }
-    setLoading(true);
-    setResultText('');
-    setMapaData(null);
-
-    // Buscar el recorridoKey correcto
-    const scheduleObj = selectSchedule.find(s => s.originTime === selectedSchedule);
-    if (!scheduleObj) {
-      setResultText("No se encontró el recorrido.");
-      setLoading(false);
-      setModalOpen(true);
-      return;
-    }
-
-    const queryParams = new URLSearchParams({
-      recorridoID: scheduleObj.routeKey,
-      ciudadObjetivo: selectedOrig
-    });
-
     try {
-      const response = await fetch(`https://bustracker-kfkx.onrender.com/distance?${queryParams.toString()}`);
-      if (!response.ok) {
-        const errorData = await response.json();
-        setResultText(errorData.error || 'Error inesperado');
-        setMapaData(null);
-        setLoading(false);
-        setModalOpen(true);
+      if (!selectedOrig || !selectedDest || !selectedSchedule) {
+        setResultado("Por favor seleccioná origen, destino y horario.");
+        setModalVisible(true);
         return;
       }
-      const data = await response.json();
-      setResultText(data.texto);
-      setMapaData(data.mapa);
-      setLoading(false);
-      setModalOpen(true);
+      const [recorridoID, originTime] = selectedSchedule.split("_");
+      const fullRoute = await getFullRoute(selectedOrig, selectedDest, originTime);
+      if (!fullRoute) {
+        setResultado("No se encontró un recorrido válido para los datos ingresados.");
+        setModalVisible(true);
+        return;
+      }
+
+      const queryParams = new URLSearchParams({
+        recorridoID: fullRoute.key,
+        ciudadObjetivo: getCityNameById(selectedOrig), // O el ID si ya lo corregiste en backend
+      });
+
+      setLoading(true);
+      const response = await fetch(`https://bustracker-kfkx.onrender.com/distance?${queryParams.toString()}`);
+      const text = await response.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        setResultado(text);
+        setModalVisible(true);
+        return;
+      }
+
+      setResultado(data.texto);
+      setModalVisible(true);
     } catch (err) {
-      setResultText(`Hubo un error al consultar la ubicación.\n${err.message}`);
-      setMapaData(null);
+      setResultado(`Hubo un error al consultar la ubicación.\n${err.message}`);
+      setModalVisible(true);
+    } finally {
       setLoading(false);
-      setModalOpen(true);
     }
   };
 
-console.log('CITIES:', cities);
-console.log('DESTINOS:', availableDestinations);
-console.log('HORARIOS:', selectSchedule);
-
   return (
-    <Box bg="#212121" p={4} borderRadius={12} w="100%" maxW={400} alignItems="center">
-      <VStack space={4} w="100%">
-        <Select
-          selectedValue={selectedOrig}
-          minWidth="100%"
-          accessibilityLabel="Selecciona ciudad de origen"
-          placeholder="Selecciona ciudad de origen"
-          onValueChange={setSelectedOrig}
-          _selectedItem={{
-            bg: "#F35E3E",
-            endIcon: <CheckIcon size="5" />,
-          }}
-          bg="#fff"
-          borderRadius={8}
-        >
-          {cities.map((city) => (
-            <Select.Item key={city.id} label={city.name} value={city.name} />
-          ))}
-        </Select>
+    <View style={styles.bg}>
+      <Text style={styles.title}>Consulta de llegada</Text>
 
-        <Select
-          selectedValue={selectedDest}
-          minWidth="100%"
-          accessibilityLabel="Selecciona ciudad de destino"
-          placeholder="Selecciona ciudad de destino"
+      <View style={styles.card}>
+      <View style={[styles.inputWrapper, { borderRadius: 16 }]}>
+  <RNPickerSelect
+    onValueChange={setSelectedOrig}
+    value={selectedOrig}
+    placeholder={{ label: 'Selecciona el origen', value: '' }}
+    items={cities.map(city => ({ label: city.name, value: city.id }))}
+    style={{
+      ...pickerSelectStyles,
+      inputIOS: { ...pickerSelectStyles.inputIOS, borderRadius: 16 },
+      inputAndroid: { ...pickerSelectStyles.inputAndroid, borderRadius: 16 }
+    }}
+  />
+</View>
+
+        <RNPickerSelect
           onValueChange={setSelectedDest}
-          isDisabled={!selectedOrig}
-          _selectedItem={{
-            bg: "#F35E3E",
-            endIcon: <CheckIcon size="5" />,
-          }}
-          bg="#fff"
-          borderRadius={8}
-        >
-          {availableDestinations.map((city, idx) => (
-            <Select.Item key={idx} label={city} value={city} />
-          ))}
-        </Select>
+          value={selectedDest}
+          placeholder={{ label: 'Selecciona el destino', value: '' }}
+          items={availableDestinations.map(destID => {
+            const city = cities.find(c => c.id === destID);
+            return city ? { label: city.name, value: city.id } : null;
+          }).filter(Boolean)}
+          style={pickerSelectStyles}
+        />
 
-        <Select
-          selectedValue={selectedSchedule}
-          minWidth="100%"
-          accessibilityLabel="Selecciona horario"
-          placeholder={selectSchedule.length ? "Selecciona tu horario" : "No hay horarios"}
+        <RNPickerSelect
           onValueChange={setSelectedSchedule}
-          isDisabled={!selectedDest}
-          _selectedItem={{
-            bg: "#F35E3E",
-            endIcon: <CheckIcon size="5" />,
-          }}
-          bg="#fff"
-          borderRadius={8}
-        >
-          {selectSchedule.map((schedule, idx) => (
-            <Select.Item
-              key={idx}
-              label={`Salida: ${schedule.originTime} - Llegada: ${schedule.destinationTime}`}
-              value={schedule.originTime}
-            />
-          ))}
-        </Select>
+          value={selectedSchedule}
+          placeholder={{ label: selectSchedule.length ? 'Selecciona el horario' : 'No hay horarios', value: '' }}
+          items={selectSchedule.map(schedule => ({
+            label: `Salida: ${schedule.originTime} - Llegada: ${schedule.destinationTime}`,
+            value: schedule.id
+          }))}
+          style={pickerSelectStyles}
+        />
 
-        <Button
-          mt={2}
-          bg="#F35E3E"
-          borderRadius={8}
-          isDisabled={!(selectedOrig && selectedDest && selectedSchedule)}
+        <TouchableOpacity
+          style={[
+            styles.button,
+            (!selectedOrig || !selectedDest || !selectedSchedule || loading) && styles.disabledButton
+          ]}
           onPress={fetchLocation}
+          disabled={!selectedOrig || !selectedDest || !selectedSchedule || loading}
         >
-          Consultar ubicación del colectivo
-        </Button>
+          {loading
+            ? <ActivityIndicator color="#fff" />
+            : <Text style={styles.buttonText}>Consultar ubicación</Text>
+          }
+        </TouchableOpacity>
+      </View>
 
-        {loading && <Spinner color="#F35E3E" mt={2} />}
-
-        <Modal isOpen={modalOpen} onClose={() => setModalOpen(false)}>
-          <Modal.Content maxWidth="400px" bg="#fff">
-            <Modal.CloseButton />
-            <Modal.Header _text={{ color: "#212121" }}>Resultado del cálculo</Modal.Header>
-            <Modal.Body>
-              <Text color="#212121">{resultText}</Text>
-              {mapaData && (
-                <Box mt={4} w="100%" h={300} borderRadius={12} overflow="hidden">
-                  <MapView
-                    style={{ width: '100%', height: 300 }}
-                    initialRegion={{
-                      latitude: mapaData.bus.latitude,
-                      longitude: mapaData.bus.longitude,
-                      latitudeDelta: 0.2,
-                      longitudeDelta: 0.2,
-                    }}
-                  >
-                    <Marker
-                      coordinate={{
-                        latitude: mapaData.bus.latitude,
-                        longitude: mapaData.bus.longitude,
-                      }}
-                      title="Colectivo"
-                      description="Ubicación actual del colectivo"
-                    />
-                    {/* Línea desde colectivo hasta objetivo */}
-                    <Polyline
-                      coordinates={[
-                        { latitude: mapaData.bus.latitude, longitude: mapaData.bus.longitude },
-                        mapaData.objetivo,
-                      ]}
-                      strokeColor="#F35E3E"
-                      strokeWidth={4}
-                    />
-                    {/* Marcador de objetivo */}
-                    <Marker
-                      coordinate={mapaData.objetivo}
-                      title="Tu parada"
-                      pinColor="#F35E3E"
-                    />
-                  </MapView>
-                </Box>
-              )}
-            </Modal.Body>
-            <Modal.Footer>
-              <Button onPress={() => setModalOpen(false)} bg="#F35E3E" borderRadius={8}>
-                Cerrar
-              </Button>
-            </Modal.Footer>
-          </Modal.Content>
-        </Modal>
-      </VStack>
-    </Box>
+      <Modal
+        visible={modalVisible}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setModalVisible(false)}
+      >
+        <View style={styles.modalBg}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalText}>{resultado}</Text>
+            <TouchableOpacity onPress={() => setModalVisible(false)} style={styles.closeBtn}>
+              <Text style={styles.closeBtnText}>Cerrar</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+    </View>
   );
 };
+
+const styles = StyleSheet.create({
+  bg: {
+    flex: 1,
+    backgroundColor: '#0000',
+    justifyContent: 'center',
+    alignItems: 'center'
+  },
+  card: {
+    backgroundColor: '#212121',
+    borderRadius: 16,
+    padding: 24,
+    width: '90%',
+    shadowColor: '#000',
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    elevation: 8,
+    marginBottom: 20
+  },
+  title: {
+    fontSize: 28,
+    fontWeight: 'bold',
+    color: '#EEEE',
+    marginBottom: 24,
+    marginTop: 12
+  },
+  label: {
+    fontSize: 16,
+    marginTop: 8,
+    marginBottom: 2,
+    color: '#222',
+    borderRadius: 16
+  },
+  button: {
+    backgroundColor: '#ee7b18',
+    padding: 16,
+    borderRadius: 10,
+    marginTop: 24,
+    alignItems: 'center',
+    shadowColor: '#ee7b18',
+    shadowOpacity: 0.25,
+    shadowRadius: 5,
+    elevation: 4
+  },
+  disabledButton: {
+    backgroundColor: '#cccccc'
+  },
+  buttonText: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: 'bold'
+  },
+  modalBg: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.3)',
+    justifyContent: 'center',
+    alignItems: 'center'
+  },
+  modalCard: {
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    padding: 28,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 12
+  },
+  modalText: {
+    fontSize: 18,
+    color: '#333',
+    marginBottom: 24
+  },
+  closeBtn: {
+    backgroundColor: '#ee7b18',
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 32
+  },
+  closeBtnText: {
+    color: '#fff',
+    fontSize: 16
+  }
+});
+
+const pickerSelectStyles = StyleSheet.create({
+  inputIOS: {
+    fontSize: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: '#ee7b18',
+    borderRadius: 16,
+    color: 'black',
+    marginBottom: 12,
+    backgroundColor: '#fafafa'
+  },
+  inputAndroid: {
+    fontSize: 16,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: '#ee7b18',
+    borderRadius: 16,
+    color: 'black',
+    marginBottom: 12,
+    backgroundColor: '#fafafa'
+  }
+});
 
 export default Time;

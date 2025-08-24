@@ -24,6 +24,7 @@ export const obtenerTiempoEstimado = async (req, res) => {
   }
 
   const destino = await getCity(ciudadObjetivo);
+  console.log(destino)
   if (!destino) return res.status(404).send("No se encontró la ciudad de destino.");
 
   try {

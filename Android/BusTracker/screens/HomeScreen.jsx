@@ -1,6 +1,6 @@
 import { FontAwesome5, Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { Box, Heading, HStack, Icon, Pressable, Text, VStack } from 'native-base';
+import { Box, HStack, Heading, Icon, Pressable, Text, VStack } from 'native-base';
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -39,7 +39,7 @@ export default function HomeScreen() {
           onPress={() => router.push('/sharelocation')}
         >
           <VStack space={3} alignItems="center">
-            <Icon as={Ionicons} name="navigate" size="2xl" color="#fff" />
+            <Icon as={Ionicons} name="navigate" size="4xl" color="#fff" />
             <Text color="#fff" fontSize="lg" fontWeight="bold">
               Compartir ubicación
             </Text>

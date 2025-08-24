@@ -4,7 +4,7 @@ import * as TaskManager from 'expo-task-manager';
 import { onValue, ref, set } from 'firebase/database';
 import { Text } from 'native-base';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Modal, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { db } from '../constants/firebaseConfig';
 
 const LOCATION_TASK_NAME = 'background-location-task';
@@ -17,14 +17,16 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
     const { locations } = data;
     const location = locations[0];
     if (location) {
-      await set(ref(db, `locations/${globalShareData.routeId}`), {
+      await set(ref(db, `location/${globalShareData.routeId}`), {
         origin: globalShareData.origin,
         originCoord: globalShareData.originCoord,
         destination: globalShareData.destination,
         schedule: globalShareData.schedule,
-        latitude: location.coords.latitude,
-        longitude: location.coords.longitude,
-        timestamp: Date.now(),
+        location: {
+          latitude: location.coords.latitude,
+          longitude: location.coords.longitude,
+        },
+        date: Date.now(),
       });
     }
   }
@@ -41,6 +43,8 @@ export default function ShareLocation() {
   const [routeId, setRouteId] = useState('');
   const [tracking, setTracking] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [modalVisible, setModalVisible] = useState(false);
+  const [modalMsg, setModalMsg] = useState('');
 
   // Cargar ciudades
   useEffect(() => {
@@ -142,12 +146,14 @@ export default function ShareLocation() {
   const startBackgroundTracking = async () => {
     let { status } = await Location.requestForegroundPermissionsAsync();
     if (status !== 'granted') {
-      Alert.alert('Permiso denegado', 'No se puede acceder a la ubicación');
+      setModalMsg('No se puede acceder a la ubicación');
+      setModalVisible(true);
       return;
     }
     let { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
     if (bgStatus !== 'granted') {
-      Alert.alert('Permiso denegado', 'No se puede acceder a la ubicación en segundo plano');
+      setModalMsg('No se puede acceder a la ubicación en segundo plano');
+      setModalVisible(true);
       return;
     }
     await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
@@ -161,28 +167,33 @@ export default function ShareLocation() {
       },
     });
     setTracking(true);
-    Alert.alert('¡Listo!', 'Tu ubicación se está compartiendo.');
+    setModalMsg('¡Listo! Tu ubicación se está compartiendo.');
+    setModalVisible(true);
   };
 
   const stopBackgroundTracking = async () => {
     await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
     setTracking(false);
-    Alert.alert('Ubicación', 'Dejaste de compartir tu ubicación.');
+    setModalMsg('Dejaste de compartir tu ubicación.');
+    setModalVisible(true);
   };
 
   if (loading) {
     return (
-      <View style={styles.container}>
-        <ActivityIndicator size="large" color="#ff9800" />
-        <Text style={styles.label}>Cargando ciudades...</Text>
+      <View style={styles.bg}>
+        <View style={styles.card}>
+          <ActivityIndicator size="large" color="#F35E3E" />
+          <Text style={styles.label}>Cargando ciudades...</Text>
+        </View>
       </View>
     );
   }
 
   return (
-    <View style={styles.outer}>
+    <View style={styles.bg}>
+      <Text style={styles.title}>Compartir ubicación</Text>
       <View style={styles.card}>
-        <Text style={styles.heading}>Consulta de llegada</Text>
+        <Text style={styles.heading}>Enviá tu ubicación al sistema</Text>
 
         <View style={styles.inputWrapper}>
           <Picker
@@ -231,10 +242,11 @@ export default function ShareLocation() {
         <TouchableOpacity
           style={[
             styles.button,
-            canShare ? styles.buttonEnabled : styles.buttonDisabled,
+            canShare && !tracking ? styles.buttonEnabled : styles.buttonDisabled,
+            tracking && styles.buttonTracking
           ]}
           onPress={tracking ? stopBackgroundTracking : startBackgroundTracking}
-          disabled={!canShare}
+          disabled={!canShare && !tracking}
           activeOpacity={0.8}
         >
           <Text style={styles.buttonText}>
@@ -242,73 +254,144 @@ export default function ShareLocation() {
           </Text>
         </TouchableOpacity>
       </View>
+
+      <Modal
+        visible={modalVisible}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setModalVisible(false)}
+      >
+        <View style={styles.modalBg}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalText}>{modalMsg}</Text>
+            <TouchableOpacity onPress={() => setModalVisible(false)} style={styles.closeBtn}>
+              <Text style={styles.closeBtnText}>Cerrar</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  outer: {
+  bg: {
     flex: 1,
-    backgroundColor: '#212121',
-    alignItems: 'center',
+    backgroundColor: '#0000',
     justifyContent: 'center',
+    alignItems: 'center'
   },
   card: {
     backgroundColor: '#212121',
-    borderRadius: 12,
+    borderRadius: 16,
     padding: 24,
     width: '90%',
-    maxWidth: 400,
-    alignItems: 'center',
     shadowColor: '#000',
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    elevation: 4,
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    elevation: 8,
+    marginBottom: 20,
+    alignItems: 'center'
+  },
+  title: {
+    fontSize: 28,
+    fontWeight: 'bold',
+    color: '#F4F4F4',
+    marginBottom: 24,
+    marginTop: 12
   },
   heading: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 18,
+    fontSize: 20,
+    fontWeight: '600',
     color: '#F4F4F4',
-    textAlign: 'center',
+    marginBottom: 14,
+    textAlign: 'center'
   },
   inputWrapper: {
-    backgroundColor: '#fff',
+    backgroundColor: '#fafafa',
     borderRadius: 8,
     marginBottom: 16,
     width: '100%',
     overflow: 'hidden',
-    borderWidth: 0,
+    borderWidth: 1,
+    borderColor: '#ee7b18',
+    paddingHorizontal: 6,
+    paddingVertical: Platform.OS === 'ios' ? 8 : 0,
   },
   picker: {
-    height: Platform.OS === 'ios' ? 180 : 48,
+    height: 50,
     width: '100%',
     color: '#212121',
-    backgroundColor: '#fff',
+    backgroundColor: '#fafafa',
+  },
+  label: {
+    fontSize: 17,
+    color: '#F4F4F4',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  labelPicker: {
+    fontSize: 15,
+    color: '#ee7b18',
+    marginBottom: Platform.OS === 'ios' ? 2 : 0,
+    marginTop: Platform.OS === 'ios' ? 4 : 0,
   },
   button: {
     marginTop: 8,
     width: '100%',
     paddingVertical: 14,
-    borderRadius: 6,
+    borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
+    shadowColor: '#ee7b18',
+    shadowOpacity: 0.25,
+    shadowRadius: 5,
+    elevation: 4
   },
   buttonEnabled: {
-    backgroundColor: '#F35E3E',
+    backgroundColor: '#ee7b18',
   },
   buttonDisabled: {
-    backgroundColor: '#bdbdbd',
+    backgroundColor: '#cccccc',
+  },
+  buttonTracking: {
+    backgroundColor: '#6dbf43',
   },
   buttonText: {
     color: '#fff',
     fontWeight: 'bold',
-    fontSize: 17,
+    fontSize: 18,
   },
-  label: {
-    fontSize: 16,
-    color: '#F4F4F4',
-    textAlign: 'center',
-    marginBottom: 8,
+  modalBg: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.3)',
+    justifyContent: 'center',
+    alignItems: 'center'
   },
+  modalCard: {
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    padding: 28,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 12
+  },
+  modalText: {
+    fontSize: 18,
+    color: '#333',
+    marginBottom: 24,
+    textAlign: 'center'
+  },
+  closeBtn: {
+    backgroundColor: '#ee7b18',
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 32
+  },
+  closeBtnText: {
+    color: '#fff',
+    fontSize: 16
+  }
 });

@@ -53,26 +53,35 @@ export const getFilteredWaypoints = async (recorridoID, currentLatLng, destinoNo
   const citiesSnapshot = await get(ref(db, 'Cities'));
   const citiesData = citiesSnapshot.val();
 
-  const ciudadDestinoID = Object.keys(citiesData).find(
-    id => citiesData[id].name.toLowerCase() === destinoNombre.toLowerCase()
-  );
-
   const orderedCities = cityOrder.map(c => ({
     id: c.cityID,
     coord: citiesData[c.cityID]?.coord,
     order: c.order
   }));
 
+  // Función para calcular la distancia usando Haversine
+  const haversineDistance = (lat1, lng1, lat2, lng2) => {
+    const toRad = angle => (angle * Math.PI) / 180;
+    const R = 6371000; // Radio de la Tierra en metros
+    const dLat = toRad(lat2 - lat1);
+    const dLng = toRad(lng2 - lng1);
+    const a =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c; // Distancia en metros
+  };
+
   // 1. Detectar en qué tramo está el colectivo
   let currentIdx = -1;
   for (let i = 0; i < orderedCities.length - 1; i++) {
     const [lat1, lng1] = orderedCities[i].coord.split(',').map(Number);
     const [lat2, lng2] = orderedCities[i + 1].coord.split(',').map(Number);
-    const dist1 = Math.sqrt((lat1 - currentLatLng.latitude) ** 2 + (lng1 - currentLatLng.longitude) ** 2);
-    const dist2 = Math.sqrt((lat2 - currentLatLng.latitude) ** 2 + (lng2 - currentLatLng.longitude) ** 2);
-    const distTotal = Math.sqrt((lat1 - lat2) ** 2 + (lng1 - lng2) ** 2);
+    const dist1 = haversineDistance(lat1, lng1, currentLatLng.latitude, currentLatLng.longitude);
+    const dist2 = haversineDistance(lat2, lng2, currentLatLng.latitude, currentLatLng.longitude);
+    const distTotal = haversineDistance(lat1, lng1, lat2, lng2);
 
-    if (Math.abs((dist1 + dist2) - distTotal) < 0.1) {
+    if (Math.abs((dist1 + dist2) - distTotal) < 100) { // Menor a 100 metros
       currentIdx = i;
       break;
     }
@@ -84,7 +93,7 @@ export const getFilteredWaypoints = async (recorridoID, currentLatLng, destinoNo
     orderedCities.forEach((c, idx) => {
       if (!c.coord) return;
       const [lat, lng] = c.coord.split(',').map(Number);
-      const distance = Math.sqrt((lat - currentLatLng.latitude) ** 2 + (lng - currentLatLng.longitude) ** 2);
+      const distance = haversineDistance(lat, lng, currentLatLng.latitude, currentLatLng.longitude);
       if (distance < minDistance) {
         minDistance = distance;
         currentIdx = idx;
@@ -92,40 +101,6 @@ export const getFilteredWaypoints = async (recorridoID, currentLatLng, destinoNo
     });
   }
 
-  const destinoIdx = orderedCities.findIndex(c => c.id === ciudadDestinoID);
-  if (currentIdx !== -1 && destinoIdx !== -1 && destinoIdx <= currentIdx) {
-    throw new Error('El colectivo ya pasó por tu ciudad.');
-  }
-
-  // 2. Filtrar ciudades entre la actual y la de destino
-  const intermediateCoords = [];
-
-  for (let i = currentIdx + 1; i < destinoIdx; i++) {
-    const coord = orderedCities[i].coord;
-    if (!coord) continue;
-
-    const [lat, lng] = coord.split(',').map(Number);
-    const cityCoordStr = `${lat},${lng}`;
-    const currentCoordStr = `${currentLatLng.latitude},${currentLatLng.longitude}`;
-
-    try {
-      const distanciaMetros = await distanceCalc(currentCoordStr, cityCoordStr);
-
-      if (distanciaMetros > 10000) {
-        intermediateCoords.push({
-          location: {
-            latLng: {
-              latitude: lat,
-              longitude: lng
-            }
-          }
-        });
-      }
-      // Si está demasiado cerca (<10km), asumimos que ya fue pasada
-    } catch (err) {
-      console.error(`Error calculando distancia para ciudad intermedia:`, err);
-    }
-  }
-
-  return intermediateCoords;
+  // Retornar los waypoints filtrados
+  return orderedCities.slice(currentIdx);
 };
