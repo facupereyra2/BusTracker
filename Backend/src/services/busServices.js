@@ -102,5 +102,7 @@ export const getFilteredWaypoints = async (recorridoID, currentLatLng, destinoNo
   }
 
   // Retornar los waypoints filtrados
-  return orderedCities.slice(currentIdx);
+  const remainingStops = orderedCities.slice(currentIdx);
+  console.log('Paradas restantes:', remainingStops);
+  return remainingStops;
 };
