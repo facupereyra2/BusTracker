@@ -1,18 +1,13 @@
-// controllers/colectivo.controller.js
 import {
   getLocation,
   getCity,
-  getFilteredWaypoints
 } from '../services/busServices.js'
 import { getHolidays } from '../utils/holiday.js';
 import axios from 'axios';
-import { ref, set, get } from 'firebase/database';
+import { get, ref } from 'firebase/database';
 import { db } from '../firebase/config.js';
-import { distanceCalc } from '../utils/distance.js';
-
 
 export const obtenerTiempoEstimado = async (req, res) => {
-  console.log('entro al backend')
   const { recorridoID, ciudadObjetivo } = req.query;
   const location = await getLocation(recorridoID);
 
@@ -23,21 +18,66 @@ export const obtenerTiempoEstimado = async (req, res) => {
     });
   }
 
-  const destino = await getCity(ciudadObjetivo);
-  console.log(destino)
-  if (!destino) return res.status(404).send("No se encontró la ciudad de destino.");
+  // 1. Traer ciudades y recorridos de la DB
+  const citiesRef = ref(db, 'Cities');
+  const recorridosRef = ref(db, 'Recorridos');
+  const [citiesSnap, recorridosSnap] = await Promise.all([get(citiesRef), get(recorridosRef)]);
+  if (!citiesSnap.exists() || !recorridosSnap.exists()) {
+    return res.status(500).json({ error: true, texto: "Error accediendo a la base de datos." });
+  }
+  const cities = citiesSnap.val();
+  const recorridos = recorridosSnap.val();
 
-  try {
-    await getFilteredWaypoints(location.schedule, { latitude: location.lat, longitude: location.lng }, ciudadObjetivo);
-  } catch (err) {
-    if (err.message === 'El colectivo ya pasó por tu ciudad.') {
-      return res.status(400).json({ error: err.message });
-    } else {
-      return res.status(500).json({ error: 'Error al verificar el recorrido.' });
-    }
+  // 2. Buscar el recorrido y la lista de cityIDs
+  const recorridoObj = recorridos[location.schedule || recorridoID];
+  const citiesArray = recorridoObj ? recorridoObj.cities.filter(Boolean) : [];
+
+  // 3. Buscar cityIDs por nombre
+  const getCityIDByName = (name) => {
+    const entry = Object.entries(cities).find(([_, val]) => val.name.toLowerCase() === name.toLowerCase());
+    return entry ? entry[0] : null;
+  };
+
+  const originID = getCityIDByName(location.origin);
+  const destinationID = getCityIDByName(location.destination);
+  const targetID = getCityIDByName(ciudadObjetivo);
+
+  const cityIDsArray = citiesArray.map(c => c.cityID);
+
+  const originIdx = cityIDsArray.indexOf(originID);
+  const destinationIdx = cityIDsArray.indexOf(destinationID);
+  const targetIdx = cityIDsArray.indexOf(targetID);
+
+  // 4. Lógica de validación de ciudad objetivo
+  if (targetIdx === -1) {
+    return res.json({ error: true, texto: `🚏 ${ciudadObjetivo} no forma parte del recorrido.` });
+  }
+  if (targetIdx < originIdx) {
+    return res.json({ error: true, texto: `El colectivo ya pasó por ${ciudadObjetivo}.` });
+  }
+  if (targetIdx > destinationIdx) {
+    return res.json({ error: true, texto: `El colectivo no llega a ${ciudadObjetivo} en este viaje.` });
+  }
+  // Si está en el tramo, pero no en stops, ya pasó
+  if (targetIdx !== destinationIdx && !(location.stops || []).some(stop => stop.name.toLowerCase() === ciudadObjetivo.toLowerCase())) {
+    return res.json({ error: true, texto: `El colectivo ya pasó por ${ciudadObjetivo}.` });
   }
 
-  const intermediates = await getFilteredWaypoints(location.schedule, { latitude: location.lat, longitude: location.lng }, ciudadObjetivo);
+  // ---- Lógica original a partir de acá: ----
+
+  const destino = await getCity(ciudadObjetivo);
+  if (!destino) return res.status(404).send("No se encontró la ciudad de destino.");
+
+  // Usar los stops guardados en la DB como intermediates
+  const intermediates = (location.stops || []).map(stop => ({
+    location: {
+      latLng: {
+        latitude: parseFloat(stop.coord.split(',')[0]),
+        longitude: parseFloat(stop.coord.split(',')[1])
+      }
+    }
+  }));
+
   const cantidadParadas = intermediates.length;
   const minutosExtraPorParadas = cantidadParadas * 5;
 
@@ -54,13 +94,17 @@ export const obtenerTiempoEstimado = async (req, res) => {
   };
 
   try {
-    const routeRes = await axios.post("https://routes.googleapis.com/directions/v2:computeRoutes", requestBody, {
-      headers: {
-        "Content-Type": "application/json",
-        "X-Goog-Api-Key": "AIzaSyCimtoa9B9Bj_Op1IiIST2vseAsVbt5vEQ",
-        "X-Goog-FieldMask": "routes.duration,routes.distanceMeters"
+    const routeRes = await axios.post(
+      "https://routes.googleapis.com/directions/v2:computeRoutes",
+      requestBody,
+      {
+        headers: {
+          "Content-Type": "application/json",
+          "X-Goog-Api-Key": "AIzaSyCimtoa9B9Bj_Op1IiIST2vseAsVbt5vEQ",
+          "X-Goog-FieldMask": "routes.duration,routes.distanceMeters"
+        }
       }
-    });
+    );
 
     const clima = await axios.get(`https://api.openweathermap.org/data/2.5/weather?lat=${location.lat}&lon=${location.lng}&appid=d3918607c24dc94a2dd83e3a36f7bd3c&units=metric&lang=es`);
     const weather = clima.data.weather[0].main;
@@ -121,50 +165,5 @@ export const obtenerTiempoEstimado = async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).send("Error al calcular la ruta");
-  }
-};
-
-export const guardarUbicacion = async (req, res) => {
-  try {
-    const { origin, destination, schedule, currentLocation } = req.body;
-
-    const originCoord = await getCity(origin);
-    if (!originCoord) {
-      return res.status(400).json({ error: 'Ciudad origen no encontrada.' });
-    }
-    const alreadyExists = await get(ref(db, `location/${schedule}`));
-    if (!alreadyExists.exists()) {
-      // solo si es la primera vez se valida la distancia
-      const distanciaMetros = await distanceCalc(
-        `${currentLocation.latitude},${currentLocation.longitude}`,
-        `${originCoord.latitude},${originCoord.longitude}`
-      );
-
-      if (distanciaMetros > 15000) {
-        return res.status(400).json({
-          error: 'Estás demasiado lejos del punto de origen del colectivo. No se puede compartir ubicación.'
-        });
-      }
-    }
-
-
-    const date = new Date().toISOString();
-    const uniqueId = `${schedule}`.replace(/\s+/g, '');
-    const locRef = ref(db, `location/${uniqueId}`);
-
-    await set(locRef, {
-      origin,
-      destination,
-      location: currentLocation,
-      date,
-      schedule,
-      waypoints: []
-    });
-
-    res.json({ success: true, mensaje: 'Ubicación guardada correctamente.' });
-
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Error interno al guardar ubicación' });
   }
 };

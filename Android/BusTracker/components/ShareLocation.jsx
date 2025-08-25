@@ -1,22 +1,61 @@
 import { Picker } from '@react-native-picker/picker';
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
-import { onValue, ref, set } from 'firebase/database';
+import { onValue, ref, remove, set } from 'firebase/database';
 import { Text } from 'native-base';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Modal, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { db } from '../constants/firebaseConfig';
 
 const LOCATION_TASK_NAME = 'background-location-task';
-
 let globalShareData = {};
 
+// Distancia en metros para considerar "pasada" una parada
+const STOP_THRESHOLD_METERS = 120;
+
+// Calcula la distancia entre dos coordenadas (en metros)
+function haversineDistance(coord1, coord2) {
+  const [lat1, lon1] = coord1.split(',').map(Number);
+  const [lat2, lon2] = coord2.split(',').map(Number);
+  const R = 6371e3;
+  const φ1 = lat1 * Math.PI/180, φ2 = lat2 * Math.PI/180;
+  const Δφ = (lat2-lat1) * Math.PI/180;
+  const Δλ = (lon2-lon1) * Math.PI/180;
+  const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+            Math.cos(φ1) * Math.cos(φ2) *
+            Math.sin(Δλ/2) * Math.sin(Δλ/2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return R * c;
+}
+
+// Devuelve solo las paradas que aún no fueron visitadas
+function filterPendingStops(stops, currentCoord, threshold = STOP_THRESHOLD_METERS) {
+  return stops.filter(stop => haversineDistance(stop.coord, currentCoord) > threshold);
+}
+
+// Obtiene el array de paradas a partir del recorrido, origen y destino elegidos
+function getIntermediateStops(citiesArray, citiesData, originID, destID) {
+  if (!Array.isArray(citiesArray) || !citiesData) return [];
+  const originIdx = citiesArray.findIndex(city => city.cityID === originID);
+  const destIdx = citiesArray.findIndex(city => city.cityID === destID);
+  if (originIdx === -1 || destIdx === -1 || originIdx >= destIdx) return [];
+  return citiesArray.slice(originIdx + 1, destIdx).map(city => ({
+    name: citiesData[city.cityID]?.name || city.cityID,
+    coord: citiesData[city.cityID]?.coord || ""
+  }));
+}
+
+// TaskManager para guardar ubicación y stops pendientes
 TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
   if (error) return;
   if (data && globalShareData.routeId) {
     const { locations } = data;
     const location = locations[0];
     if (location) {
+      const currentCoord = `${location.coords.latitude},${location.coords.longitude}`;
+      // Solo filtrar stops, no inicializar nunca
+      globalShareData.stops = filterPendingStops(globalShareData.stops || [], currentCoord);
+
       await set(ref(db, `location/${globalShareData.routeId}`), {
         origin: globalShareData.origin,
         originCoord: globalShareData.originCoord,
@@ -26,6 +65,7 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
           latitude: location.coords.latitude,
           longitude: location.coords.longitude,
         },
+        stops: globalShareData.stops,
         date: Date.now(),
       });
     }
@@ -45,14 +85,20 @@ export default function ShareLocation() {
   const [loading, setLoading] = useState(true);
   const [modalVisible, setModalVisible] = useState(false);
   const [modalMsg, setModalMsg] = useState('');
+  const [recorridos, setRecorridos] = useState({});
 
-  // Cargar ciudades
+  // Cargar ciudades y recorridos
   useEffect(() => {
     const citiesRef = ref(db, "Cities");
     onValue(citiesRef, (snapshot) => {
       const data = snapshot.val();
       setCities(data || {});
       setLoading(false);
+    });
+    const recorridosRef = ref(db, "Recorridos");
+    onValue(recorridosRef, (snapshot) => {
+      const data = snapshot.val();
+      setRecorridos(data || {});
     });
   }, []);
 
@@ -66,34 +112,30 @@ export default function ShareLocation() {
       setRouteId('');
       return;
     }
-    const recorridosRef = ref(db, "Recorridos");
-    onValue(recorridosRef, (snapshot) => {
-      const data = snapshot.val();
-      const destinationsSet = new Set();
-      for (const recorrido in data) {
-        const citiesArray = data[recorrido].cities.filter(Boolean);
-        let originIndex = -1;
-        citiesArray.forEach((ciudad, index) => {
-          const cityName = cities[ciudad.cityID]?.name;
-          if (cityName === origin) originIndex = index;
-        });
-        if (originIndex !== -1) {
-          for (let i = originIndex + 1; i < citiesArray.length; i++) {
-            const cityName = cities[citiesArray[i].cityID]?.name;
-            if (cityName) destinationsSet.add(cityName);
-          }
+    const destinationsSet = new Set();
+    for (const recorrido in recorridos) {
+      const citiesArray = recorridos[recorrido].cities.filter(Boolean);
+      let originIndex = -1;
+      citiesArray.forEach((ciudad, index) => {
+        const cityName = cities[ciudad.cityID]?.name;
+        if (cityName === origin) originIndex = index;
+      });
+      if (originIndex !== -1) {
+        for (let i = originIndex + 1; i < citiesArray.length; i++) {
+          const cityName = cities[citiesArray[i].cityID]?.name;
+          if (cityName) destinationsSet.add(cityName);
         }
       }
-      setAvailableDestinations(Array.from(destinationsSet));
-      setDestination('');
-      setSchedules([]);
-      setSelectedSchedule('');
-      setRouteId('');
-    });
+    }
+    setAvailableDestinations(Array.from(destinationsSet));
+    setDestination('');
+    setSchedules([]);
+    setSelectedSchedule('');
+    setRouteId('');
     // Guardar coordenadas del origen
     const cityEntry = Object.values(cities).find(c => c.name === origin);
     setOriginCoord(cityEntry?.coord || '');
-  }, [origin, cities]);
+  }, [origin, cities, recorridos]);
 
   // Cargar horarios y routeId según origen y destino
   useEffect(() => {
@@ -103,73 +145,106 @@ export default function ShareLocation() {
       setRouteId('');
       return;
     }
-    const recorridosRef = ref(db, "Recorridos");
-    onValue(recorridosRef, (snapshot) => {
-      const data = snapshot.val();
-      const allSchedules = [];
-      for (const recorrido in data) {
-        const citiesArray = data[recorrido].cities.filter(Boolean);
-        let originIndex = -1;
-        let destinationIndex = -1;
-        citiesArray.forEach((ciudad, index) => {
-          const cityID = ciudad.cityID;
-          const cityName = cities[cityID]?.name;
-          if (cityName === origin) originIndex = index;
-          if (cityName === destination) destinationIndex = index;
-        });
-        if (originIndex !== -1 && destinationIndex !== -1 && originIndex < destinationIndex) {
-          allSchedules.push({ hour: citiesArray[originIndex].hour, route: recorrido });
-        }
+    const allSchedules = [];
+    for (const recorrido in recorridos) {
+      const citiesArray = recorridos[recorrido].cities.filter(Boolean);
+      let originIndex = -1;
+      let destinationIndex = -1;
+      citiesArray.forEach((ciudad, index) => {
+        const cityID = ciudad.cityID;
+        const cityName = cities[cityID]?.name;
+        if (cityName === origin) originIndex = index;
+        if (cityName === destination) destinationIndex = index;
+      });
+      if (originIndex !== -1 && destinationIndex !== -1 && originIndex < destinationIndex) {
+        allSchedules.push({ hour: citiesArray[originIndex].hour, route: recorrido, citiesArray });
       }
-      setSchedules(allSchedules);
-      setSelectedSchedule('');
-      setRouteId('');
-    });
-  }, [origin, destination, cities]);
+    }
+    setSchedules(allSchedules);
+    setSelectedSchedule('');
+    setRouteId('');
+  }, [origin, destination, cities, recorridos]);
 
-  // Guardar datos seleccionados para background task
+  // Guardar datos seleccionados para background task e inicializar stops SIEMPRE
   useEffect(() => {
     if (!origin || !originCoord || !destination || !selectedSchedule) return;
     const scheduleObj = schedules.find(s => s.route === selectedSchedule);
-    setRouteId(selectedSchedule);
+
+    // Encontrar IDs
+    const originID = Object.keys(cities).find(key => cities[key].name === origin);
+    const destinationID = Object.keys(cities).find(key => cities[key].name === destination);
+
+    // Buscar el array cities del recorrido seleccionado
+    const recorridoObj = recorridos[selectedSchedule];
+    const citiesArray = recorridoObj ? recorridoObj.cities.filter(Boolean) : [];
+
+    // Calcular stops en este momento, así siempre se inicializan limpios
+    const stopsInit = getIntermediateStops(
+      citiesArray,
+      cities,
+      originID,
+      destinationID
+    );
+
     globalShareData = {
       origin,
       originCoord,
       destination,
       schedule: scheduleObj?.hour || '',
       routeId: selectedSchedule,
+      citiesData: cities,
+      recorridoCities: citiesArray,
+      originID,
+      destinationID,
+      stops: stopsInit // SIEMPRE inicializado de nuevo
     };
-  }, [origin, originCoord, destination, selectedSchedule, schedules]);
+    setRouteId(selectedSchedule);
+  }, [origin, originCoord, destination, selectedSchedule, schedules, cities, recorridos]);
 
   const canShare = origin && destination && selectedSchedule;
 
   const startBackgroundTracking = async () => {
-    let { status } = await Location.requestForegroundPermissionsAsync();
-    if (status !== 'granted') {
-      setModalMsg('No se puede acceder a la ubicación');
-      setModalVisible(true);
-      return;
-    }
-    let { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
-    if (bgStatus !== 'granted') {
-      setModalMsg('No se puede acceder a la ubicación en segundo plano');
-      setModalVisible(true);
-      return;
-    }
-    await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
-      accuracy: Location.Accuracy.Highest,
-      timeInterval: 10000, // cada 10 segundos
-      distanceInterval: 0,
-      showsBackgroundLocationIndicator: true,
-      foregroundService: {
-        notificationTitle: 'Compartiendo ubicación',
-        notificationBody: 'Tu ubicación se está compartiendo en segundo plano.',
-      },
-    });
-    setTracking(true);
-    setModalMsg('¡Listo! Tu ubicación se está compartiendo.');
+  // Limpiar ubicación previa en la DB (opcional pero recomendado)
+  await remove(ref(db, `location/${globalShareData.routeId}`));
+
+  // FORZAR REINICIO DE STOPS
+  const originID = Object.keys(cities).find(key => cities[key].name === origin);
+  const destinationID = Object.keys(cities).find(key => cities[key].name === destination);
+  const recorridoObj = recorridos[selectedSchedule];
+  const citiesArray = recorridoObj ? recorridoObj.cities.filter(Boolean) : [];
+  globalShareData.stops = getIntermediateStops(
+    citiesArray,
+    cities,
+    originID,
+    destinationID
+  );
+
+  let { status } = await Location.requestForegroundPermissionsAsync();
+  if (status !== 'granted') {
+    setModalMsg('No se puede acceder a la ubicación');
     setModalVisible(true);
-  };
+    return;
+  }
+  let { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
+  if (bgStatus !== 'granted') {
+    setModalMsg('No se puede acceder a la ubicación en segundo plano');
+    setModalVisible(true);
+    return;
+  }
+  await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
+    accuracy: Location.Accuracy.Highest,
+    timeInterval: 10000, // cada 10 segundos
+    distanceInterval: 0,
+    showsBackgroundLocationIndicator: true,
+    foregroundService: {
+      notificationTitle: 'Compartiendo ubicación',
+      notificationBody: 'Tu ubicación se está compartiendo en segundo plano.',
+    },
+  });
+  setTracking(true);
+  setModalMsg('¡Listo! Tu ubicación se está compartiendo.');
+  setModalVisible(true);
+};
 
   const stopBackgroundTracking = async () => {
     await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
@@ -194,7 +269,6 @@ export default function ShareLocation() {
       <Text style={styles.title}>Compartir ubicación</Text>
       <View style={styles.card}>
         <Text style={styles.heading}>Enviá tu ubicación al sistema</Text>
-
         <View style={styles.inputWrapper}>
           <Picker
             selectedValue={origin}
@@ -208,7 +282,6 @@ export default function ShareLocation() {
             ))}
           </Picker>
         </View>
-
         <View style={styles.inputWrapper}>
           <Picker
             selectedValue={destination}
@@ -223,7 +296,6 @@ export default function ShareLocation() {
             ))}
           </Picker>
         </View>
-
         <View style={styles.inputWrapper}>
           <Picker
             selectedValue={selectedSchedule}
@@ -238,7 +310,6 @@ export default function ShareLocation() {
             ))}
           </Picker>
         </View>
-
         <TouchableOpacity
           style={[
             styles.button,
@@ -254,7 +325,6 @@ export default function ShareLocation() {
           </Text>
         </TouchableOpacity>
       </View>
-
       <Modal
         visible={modalVisible}
         animationType="fade"
