@@ -32,18 +32,18 @@ export const obtenerTiempoEstimado = async (req, res) => {
   const recorridoObj = recorridos[location.schedule || recorridoID];
   const citiesArray = recorridoObj ? recorridoObj.cities.filter(Boolean) : [];
 
-  // 3. Buscar cityIDs por nombre
-  const getCityIDByName = (name) => {
+  function normalize(str) {
+  return (str || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+}
+
+const getCityIDByName = (name) => {
   if (!name) return null;
-  // cities puede tener valores undefined o null, lo protegemos:
   const entry = Object.entries(cities).find(
     ([_, val]) =>
       val &&
       val.name &&
       typeof val.name === "string" &&
-      name &&
-      typeof name === "string" &&
-      val.name.toLowerCase() === name.toLowerCase()
+      normalize(val.name) === normalize(name)
   );
   return entry ? entry[0] : null;
 };
@@ -57,6 +57,16 @@ export const obtenerTiempoEstimado = async (req, res) => {
   const destinationIdx = cityIDsArray.indexOf(destinationID);
   const targetIdx = cityIDsArray.indexOf(targetID);
 
+
+  console.log("Recorrido:", recorridoObj.name);
+  console.log("ciudadObjetivo:", ciudadObjetivo);
+  console.log("targetID:", targetID);
+  console.log("cityIDsArray:", cityIDsArray);
+  console.log("targetIdx:", targetIdx);
+  console.log("originID:", originID, "originIdx:", originIdx);
+  console.log("destinationID:", destinationID, "destinationIdx:", destinationIdx);
+  console.log("Stops:", (location.stops || []).map(s => s.name));
+
   // 4. Lógica de validación de ciudad objetivo
   if (targetIdx === -1) {
     return res.json({ error: true, texto: `🚏 ${ciudadObjetivo} no forma parte del recorrido.` });
@@ -68,9 +78,12 @@ export const obtenerTiempoEstimado = async (req, res) => {
     return res.json({ error: true, texto: `El colectivo no llega a ${ciudadObjetivo} en este viaje.` });
   }
   // Si está en el tramo, pero no en stops, ya pasó
-  if (targetIdx !== destinationIdx && !(location.stops || []).some(stop => stop.name.toLowerCase() === ciudadObjetivo.toLowerCase())) {
-    return res.json({ error: true, texto: `El colectivo ya pasó por ${ciudadObjetivo}.` });
-  }
+  if (
+  targetIdx !== destinationIdx &&
+  !((location.stops || []).some(stop => normalize(stop.name) === normalize(ciudadObjetivo)))
+) {
+  return res.json({ error: true, texto: `El colectivo ya pasó por ${ciudadObjetivo}.` });
+}
 
   // ---- Lógica original a partir de acá: ----
 

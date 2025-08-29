@@ -253,7 +253,7 @@ const TimeScreen = () => {
 const styles = StyleSheet.create({
   bg: {
     flex: 1,
-    backgroundColor: '#0000',
+    backgroundColor: '#000000',
     justifyContent: 'center',
     alignItems: 'center'
   },
