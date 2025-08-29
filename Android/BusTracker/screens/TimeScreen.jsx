@@ -149,7 +149,9 @@ const TimeScreen = () => {
 
       const queryParams = new URLSearchParams({
         recorridoID: fullRoute.key,
-        ciudadObjetivo: getCityNameById(selectedOrig), // O el ID si ya lo corregiste en backend
+        origin: getCityNameById(selectedOrig),
+        destination: getCityNameById(selectedDest),
+        ciudadObjetivo: getCityNameById(selectedDest), // O el objetivo real a consultar
       });
 
       setLoading(true);
@@ -180,19 +182,19 @@ const TimeScreen = () => {
       <Text style={styles.title}>Consulta de llegada</Text>
 
       <View style={styles.card}>
-      <View style={[styles.inputWrapper, { borderRadius: 16 }]}>
-  <RNPickerSelect
-    onValueChange={setSelectedOrig}
-    value={selectedOrig}
-    placeholder={{ label: 'Selecciona el origen', value: '' }}
-    items={cities.map(city => ({ label: city.name, value: city.id }))}
-    style={{
-      ...pickerSelectStyles,
-      inputIOS: { ...pickerSelectStyles.inputIOS, borderRadius: 16 },
-      inputAndroid: { ...pickerSelectStyles.inputAndroid, borderRadius: 16 }
-    }}
-  />
-</View>
+        <View style={[styles.inputWrapper, { borderRadius: 16 }]}>
+          <RNPickerSelect
+            onValueChange={setSelectedOrig}
+            value={selectedOrig}
+            placeholder={{ label: 'Selecciona el origen', value: '' }}
+            items={cities.map(city => ({ label: city.name, value: city.id }))}
+            style={{
+              ...pickerSelectStyles,
+              inputIOS: { ...pickerSelectStyles.inputIOS, borderRadius: 16 },
+              inputAndroid: { ...pickerSelectStyles.inputAndroid, borderRadius: 16 }
+            }}
+          />
+        </View>
 
         <RNPickerSelect
           onValueChange={setSelectedDest}

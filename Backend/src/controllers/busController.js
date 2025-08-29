@@ -8,15 +8,7 @@ import { get, ref } from 'firebase/database';
 import { db } from '../firebase/config.js';
 
 export const obtenerTiempoEstimado = async (req, res) => {
-  const { recorridoID, ciudadObjetivo } = req.query;
-  const location = await getLocation(recorridoID);
-
-  if (!location || location.error) {
-    return res.json({
-      error: true,
-      texto: location?.error || "No hay información de ubicación."
-    });
-  }
+  const { recorridoID, origin, destination, ciudadObjetivo } = req.query;
 
   // 1. Traer ciudades y recorridos de la DB
   const citiesRef = ref(db, 'Cities');
@@ -27,13 +19,6 @@ export const obtenerTiempoEstimado = async (req, res) => {
   }
   const cities = citiesSnap.val();
   const recorridos = recorridosSnap.val();
-
-  console.log("location.origin:", location.origin);
-  console.log("location.destination:", location.destination);
-
-  // 2. Buscar el recorrido y la lista de cityIDs
-  const recorridoObj = recorridos[recorridoID]; // <<--- LA CLAVE!
-  const citiesArray = recorridoObj ? recorridoObj.cities.filter(Boolean) : [];
 
   function normalize(str) {
     return (str || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
@@ -51,9 +36,22 @@ export const obtenerTiempoEstimado = async (req, res) => {
     return entry ? entry[0] : null;
   };
 
-  const originID = getCityIDByName(location.origin);
-  const destinationID = getCityIDByName(location.destination);
+  const originID = getCityIDByName(origin);
+  const destinationID = getCityIDByName(destination);
   const targetID = getCityIDByName(ciudadObjetivo);
+
+  const location = await getLocation(recorridoID);
+
+  if (!location || location.error) {
+    return res.json({
+      error: true,
+      texto: location?.error || "No hay información de ubicación."
+    });
+  }
+
+  // 2. Buscar el recorrido y la lista de cityIDs
+  const recorridoObj = recorridos[recorridoID];
+  const citiesArray = recorridoObj ? recorridoObj.cities.filter(Boolean) : [];
 
   const cityIDsArray = citiesArray.map(c => c.cityID);
 
