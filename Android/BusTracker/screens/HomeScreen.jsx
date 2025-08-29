@@ -1,51 +1,85 @@
 import { FontAwesome5, Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { Box, HStack, Heading, Icon, Pressable, Text, VStack } from 'native-base';
+import { Alert, Dimensions, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+
+const CARD_HEIGHT = 150;
+const CARD_RADIUS = 16;
+const SPACING = 12;
 
 export default function HomeScreen() {
   const router = useRouter();
 
   return (
-    <Box flex={1} bg="#212121" alignItems="center" justifyContent="center" px={4}>
-      <Heading color="#fff" mt={12} mb={8} fontWeight="bold" fontSize="2xl">
-        ¿Qué desea hacer?
-      </Heading>
-      <HStack space={6} w="100%" justifyContent="center">
-        <Pressable
-          flex={1}
-          bg="#3B82F6"
-          borderRadius={16}
-          alignItems="center"
-          justifyContent="center"
-          h={150}
-          mx={1}
+    <View style={styles.container}>
+      <Text style={styles.heading}>¿Qué desea hacer?</Text>
+      <View style={styles.row}>
+        <TouchableOpacity
+          style={[styles.card, { backgroundColor: '#3B82F6' }]}
           onPress={() => router.push('/time')}
+          onLongPress={() => {
+            Alert.alert("Navegando con navigate (replace)");
+            router.navigate('/time');
+          }}
+          activeOpacity={0.85}
         >
-          <VStack space={3} alignItems="center">
-            <Icon as={FontAwesome5} name="clock" size="2xl" color="#fff" />
-            <Text color="#fff" fontSize="lg" fontWeight="bold">
-              Calcular tiempo
-            </Text>
-          </VStack>
-        </Pressable>
-        <Pressable
-          flex={1}
-          bg="#F35E3E"
-          borderRadius={16}
-          alignItems="center"
-          justifyContent="center"
-          h={150}
-          mx={1}
-          onPress={() => router.push('/sharelocation')}
+          <FontAwesome5 name="clock" size={40} color="#fff" style={{ marginBottom: 10 }} />
+          <Text style={styles.cardText}>Calcular tiempo</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.card, { backgroundColor: '#F35E3E' }]}
+          onPress={() => router.push('/location')}
+          onLongPress={() => {
+            Alert.alert("Navegando con navigate (replace)");
+            router.navigate('/location');
+          }}
+          activeOpacity={0.85}
         >
-          <VStack space={3} alignItems="center">
-            <Icon as={Ionicons} name="navigate" size="4xl" color="#fff" />
-            <Text color="#fff" fontSize="lg" fontWeight="bold">
-              Compartir ubicación
-            </Text>
-          </VStack>
-        </Pressable>
-      </HStack>
-    </Box>
+          <Ionicons name="navigate" size={48} color="#fff" style={{ marginBottom: 10 }} />
+          <Text style={styles.cardText}>Compartir ubicación</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
   );
 }
+
+const { width } = Dimensions.get('window');
+const cardWidth = (width - SPACING * 3) / 2;
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#212121',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  heading: {
+    color: '#fff',
+    marginTop: 48,
+    marginBottom: 32,
+    fontWeight: 'bold',
+    fontSize: 24,
+    textAlign: 'center',
+  },
+  row: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    width: '100%',
+  },
+  card: {
+    flex: 1,
+    height: CARD_HEIGHT,
+    borderRadius: CARD_RADIUS,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginHorizontal: 6,
+    marginBottom: 0,
+    elevation: 2,
+  },
+  cardText: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
+});

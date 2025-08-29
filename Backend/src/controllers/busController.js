@@ -34,10 +34,19 @@ export const obtenerTiempoEstimado = async (req, res) => {
 
   // 3. Buscar cityIDs por nombre
   const getCityIDByName = (name) => {
-    const entry = Object.entries(cities).find(([_, val]) => val.name.toLowerCase() === name.toLowerCase());
-    return entry ? entry[0] : null;
-  };
-
+  if (!name) return null;
+  // cities puede tener valores undefined o null, lo protegemos:
+  const entry = Object.entries(cities).find(
+    ([_, val]) =>
+      val &&
+      val.name &&
+      typeof val.name === "string" &&
+      name &&
+      typeof name === "string" &&
+      val.name.toLowerCase() === name.toLowerCase()
+  );
+  return entry ? entry[0] : null;
+};
   const originID = getCityIDByName(location.origin);
   const destinationID = getCityIDByName(location.destination);
   const targetID = getCityIDByName(ciudadObjetivo);

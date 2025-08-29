@@ -1,10 +1,10 @@
 import { get, ref } from 'firebase/database';
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ActivityIndicator, Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import RNPickerSelect from 'react-native-picker-select';
 import { db } from '../constants/firebaseConfig';
 
-const Time = () => {
+const TimeScreen = () => {
   const [cities, setCities] = useState([]);
   const [selectedOrig, setSelectedOrig] = useState('');
   const [selectedDest, setSelectedDest] = useState('');
@@ -165,6 +165,7 @@ const Time = () => {
       }
 
       setResultado(data.texto);
+      console.log(resultado)
       setModalVisible(true);
     } catch (err) {
       setResultado(`Hubo un error al consultar la ubicación.\n${err.message}`);
@@ -358,4 +359,4 @@ const pickerSelectStyles = StyleSheet.create({
   }
 });
 
-export default Time;
+export default TimeScreen;

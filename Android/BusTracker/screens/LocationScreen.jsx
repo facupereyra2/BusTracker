@@ -2,9 +2,8 @@ import { Picker } from '@react-native-picker/picker';
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 import { onValue, ref, remove, set } from 'firebase/database';
-import { Text } from 'native-base';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Modal, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Modal, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { db } from '../constants/firebaseConfig';
 
 const LOCATION_TASK_NAME = 'background-location-task';
@@ -72,7 +71,7 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
   }
 });
 
-export default function ShareLocation() {
+export default function LocationScreen() {
   const [cities, setCities] = useState({});
   const [origin, setOrigin] = useState('');
   const [originCoord, setOriginCoord] = useState('');
@@ -347,7 +346,7 @@ export default function ShareLocation() {
 const styles = StyleSheet.create({
   bg: {
     flex: 1,
-    backgroundColor: '#0000',
+    backgroundColor: '#012121',
     justifyContent: 'center',
     alignItems: 'center'
   },
