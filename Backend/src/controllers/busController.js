@@ -28,6 +28,9 @@ export const obtenerTiempoEstimado = async (req, res) => {
   const cities = citiesSnap.val();
   const recorridos = recorridosSnap.val();
 
+  console.log("location.origin:", location.origin);
+  console.log("location.destination:", location.destination);
+
   // 2. Buscar el recorrido y la lista de cityIDs
   const recorridoObj = recorridos[recorridoID]; // <<--- LA CLAVE!
   const citiesArray = recorridoObj ? recorridoObj.cities.filter(Boolean) : [];
