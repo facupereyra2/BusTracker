@@ -29,24 +29,25 @@ export const obtenerTiempoEstimado = async (req, res) => {
   const recorridos = recorridosSnap.val();
 
   // 2. Buscar el recorrido y la lista de cityIDs
-  const recorridoObj = recorridos[location.schedule || recorridoID];
+  const recorridoObj = recorridos[recorridoID]; // <<--- LA CLAVE!
   const citiesArray = recorridoObj ? recorridoObj.cities.filter(Boolean) : [];
 
   function normalize(str) {
-  return (str || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
-}
+    return (str || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+  }
 
-const getCityIDByName = (name) => {
-  if (!name) return null;
-  const entry = Object.entries(cities).find(
-    ([_, val]) =>
-      val &&
-      val.name &&
-      typeof val.name === "string" &&
-      normalize(val.name) === normalize(name)
-  );
-  return entry ? entry[0] : null;
-};
+  const getCityIDByName = (name) => {
+    if (!name) return null;
+    const entry = Object.entries(cities).find(
+      ([_, val]) =>
+        val &&
+        val.name &&
+        typeof val.name === "string" &&
+        normalize(val.name) === normalize(name)
+    );
+    return entry ? entry[0] : null;
+  };
+
   const originID = getCityIDByName(location.origin);
   const destinationID = getCityIDByName(location.destination);
   const targetID = getCityIDByName(ciudadObjetivo);
@@ -56,7 +57,6 @@ const getCityIDByName = (name) => {
   const originIdx = cityIDsArray.indexOf(originID);
   const destinationIdx = cityIDsArray.indexOf(destinationID);
   const targetIdx = cityIDsArray.indexOf(targetID);
-
 
   console.log("Recorrido:", recorridoObj.name);
   console.log("ciudadObjetivo:", ciudadObjetivo);
@@ -79,11 +79,11 @@ const getCityIDByName = (name) => {
   }
   // Si está en el tramo, pero no en stops, ya pasó
   if (
-  targetIdx !== destinationIdx &&
-  !((location.stops || []).some(stop => normalize(stop.name) === normalize(ciudadObjetivo)))
-) {
-  return res.json({ error: true, texto: `El colectivo ya pasó por ${ciudadObjetivo}.` });
-}
+    targetIdx !== destinationIdx &&
+    !((location.stops || []).some(stop => normalize(stop.name) === normalize(ciudadObjetivo)))
+  ) {
+    return res.json({ error: true, texto: `El colectivo ya pasó por ${ciudadObjetivo}.` });
+  }
 
   // ---- Lógica original a partir de acá: ----
 
