@@ -1,0 +1,15 @@
+export const COLORS = {
+  background: '#18181b',
+  card: '#23232b',
+  blue: '#3652AD',
+  orange: '#F35E3E',
+  text: '#f8f8f2',
+  textSecondary: '#bdbdbd',
+  accent: '#ee7b18',
+  accentSecondary: '#1e293b',
+  inputBg: '#23232b',
+  disabled: '#393939',
+  error: '#ff5555',
+  white: '#fff',
+  modalBg: 'rgba(0,0,0,0.3)',
+};

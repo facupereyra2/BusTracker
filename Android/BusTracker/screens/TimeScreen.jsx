@@ -1,8 +1,10 @@
+import { Picker } from '@react-native-picker/picker';
 import { get, ref } from 'firebase/database';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import RNPickerSelect from 'react-native-picker-select';
+import { ActivityIndicator, Modal, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import MapPreview from '../components/MapPreview';
 import { db } from '../constants/firebaseConfig';
+import { COLORS } from '../styles/theme';
 
 const TimeScreen = () => {
   const [cities, setCities] = useState([]);
@@ -13,7 +15,7 @@ const TimeScreen = () => {
   const [selectSchedule, setSelectSchedule] = useState([]);
   const [loading, setLoading] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
-  const [resultado, setResultado] = useState('');
+  const [resultado, setResultado] = useState(null);
 
   // Cargar ciudades
   useEffect(() => {
@@ -40,7 +42,6 @@ const TimeScreen = () => {
       setSelectSchedule([]);
       return;
     }
-
     const recorridosRef = ref(db, 'Recorridos');
     get(recorridosRef).then(snapshot => {
       const data = snapshot.val();
@@ -67,19 +68,15 @@ const TimeScreen = () => {
       setSelectSchedule([]);
       return;
     }
-
     const recorridosRef = ref(db, 'Recorridos');
     get(recorridosRef).then(snapshot => {
       const data = snapshot.val();
       const schedulesArray = [];
-
       for (const key in data) {
         const recorrido = data[key];
         const citiesOrder = recorrido.cities.filter(city => city && city.cityID);
-
         const originIndex = citiesOrder.findIndex(city => city.cityID === selectedOrig);
         const destinationIndex = citiesOrder.findIndex(city => city.cityID === selectedDest);
-
         if (originIndex !== -1 && destinationIndex !== -1 && originIndex < destinationIndex) {
           schedulesArray.push({
             id: `${key}_${citiesOrder[originIndex].hour}`,
@@ -129,20 +126,20 @@ const TimeScreen = () => {
   // Consultar ubicación
   const fetchLocation = async () => {
     if (cities.length === 0) {
-      setResultado("Las ciudades aún no se cargaron. Esperá unos segundos.");
+      setResultado({ error: true, msg: "Las ciudades aún no se cargaron. Esperá unos segundos." });
       setModalVisible(true);
       return;
     }
     try {
       if (!selectedOrig || !selectedDest || !selectedSchedule) {
-        setResultado("Por favor seleccioná origen, destino y horario.");
+        setResultado({ error: true, msg: "Por favor seleccioná origen, destino y horario." });
         setModalVisible(true);
         return;
       }
       const [recorridoID, originTime] = selectedSchedule.split("_");
       const fullRoute = await getFullRoute(selectedOrig, selectedDest, originTime);
       if (!fullRoute) {
-        setResultado("No se encontró un recorrido válido para los datos ingresados.");
+        setResultado({ error: true, msg: "No se encontró un recorrido válido para los datos ingresados." });
         setModalVisible(true);
         return;
       }
@@ -151,83 +148,131 @@ const TimeScreen = () => {
         recorridoID: fullRoute.key,
         origin: getCityNameById(selectedOrig),
         destination: getCityNameById(selectedDest),
-        ciudadObjetivo: getCityNameById(selectedDest), // O el objetivo real a consultar
+        ciudadObjetivo: getCityNameById(selectedOrig),
       });
 
       setLoading(true);
-      const response = await fetch(`https://bustracker-kfkx.onrender.com/distance?${queryParams.toString()}`);
+      const response = await fetch(`http://192.168.1.38:3000/distance?${queryParams.toString()}`);
       const text = await response.text();
       let data;
       try {
         data = JSON.parse(text);
       } catch {
-        setResultado(text);
+        setResultado({ error: true, msg: text });
         setModalVisible(true);
         return;
       }
 
-      setResultado(data.texto);
-      console.log(resultado)
+      setResultado(data);
       setModalVisible(true);
     } catch (err) {
-      setResultado(`Hubo un error al consultar la ubicación.\n${err.message}`);
+      setResultado({ error: true, msg: `Hubo un error al consultar la ubicación.\n${err.message}` });
       setModalVisible(true);
     } finally {
       setLoading(false);
     }
   };
 
+  // Condición para habilitar el botón
+  const canQuery = selectedOrig && selectedDest && selectedSchedule;
+
+  // Modal de resultado
+  function ModalContent({ resultado }) {
+    if (!resultado) return null;
+    if (resultado.error || resultado.msg) {
+      return (
+        <Text style={[styles.modalText, { color: '#b71c1c' }]}>
+          {resultado.msg || resultado.texto || "Ocurrió un error"}
+        </Text>
+      );
+    }
+
+    return (
+      <View style={{ alignItems: 'flex-start', width: '100%' }}>
+        <Text style={styles.modalTitle}>Consulta de llegada</Text>
+        <Text style={styles.modalStrong}>
+          {resultado.ciudadObjetivo ? `🚌 Tiempo estimado hasta ${resultado.ciudadObjetivo}: ` : "🚌 Tiempo estimado: "}
+          <Text style={styles.modalNormal}>{resultado.tiempo}</Text>
+        </Text>
+        <Text style={styles.modalStrong}>🕓 Hora estimada de llegada: <Text style={styles.modalNormal}>{resultado.hora}</Text></Text>
+        <Text style={styles.modalStrong}>🌦️ Clima: <Text style={styles.modalNormal}>{resultado.clima}</Text></Text>
+        <Text style={styles.modalStrong}>📅 Día: <Text style={styles.modalNormal}>{resultado.dia}</Text></Text>
+        <Text style={styles.modalStrong}>⏱️ Ajustes aplicados: <Text style={styles.modalNormal}>{resultado.ajustes}</Text></Text>
+        <Text style={styles.modalStrong}>🚏 Paradas intermedias: <Text style={styles.modalNormal}>{resultado.paradas}</Text></Text>
+        <Text style={styles.modalStrong}>📍 Última ubicación recibida: <Text style={styles.modalNormal}>{resultado.ubicacion}</Text></Text>
+        {resultado.mapa && (
+          <MapPreview
+            currentLocation={resultado.mapa.currentLocation}
+            destinationCoord={resultado.mapa.destinationCoord}
+            waypoints={resultado.mapa.waypoints}
+          />
+        )}
+      </View>
+    );
+  }
+
   return (
     <View style={styles.bg}>
       <Text style={styles.title}>Consulta de llegada</Text>
-
       <View style={styles.card}>
-        <View style={[styles.inputWrapper, { borderRadius: 16 }]}>
-          <RNPickerSelect
+        <Text style={styles.heading}>Consultá el horario de llegada</Text>
+        <View style={styles.inputWrapper}>
+          <Picker
+            selectedValue={selectedOrig}
             onValueChange={setSelectedOrig}
-            value={selectedOrig}
-            placeholder={{ label: 'Selecciona el origen', value: '' }}
-            items={cities.map(city => ({ label: city.name, value: city.id }))}
-            style={{
-              ...pickerSelectStyles,
-              inputIOS: { ...pickerSelectStyles.inputIOS, borderRadius: 16 },
-              inputAndroid: { ...pickerSelectStyles.inputAndroid, borderRadius: 16 }
-            }}
-          />
+            style={styles.picker}
+            dropdownIconColor={COLORS.card}
+          >
+            <Picker.Item label="Selecciona ciudad de origen" value="" />
+            {cities.map(city => (
+              <Picker.Item key={city.id} label={city.name} value={city.id} />
+            ))}
+          </Picker>
         </View>
-
-        <RNPickerSelect
-          onValueChange={setSelectedDest}
-          value={selectedDest}
-          placeholder={{ label: 'Selecciona el destino', value: '' }}
-          items={availableDestinations.map(destID => {
-            const city = cities.find(c => c.id === destID);
-            return city ? { label: city.name, value: city.id } : null;
-          }).filter(Boolean)}
-          style={pickerSelectStyles}
-        />
-
-        <RNPickerSelect
-          onValueChange={setSelectedSchedule}
-          value={selectedSchedule}
-          placeholder={{ label: selectSchedule.length ? 'Selecciona el horario' : 'No hay horarios', value: '' }}
-          items={selectSchedule.map(schedule => ({
-            label: `Salida: ${schedule.originTime} - Llegada: ${schedule.destinationTime}`,
-            value: schedule.id
-          }))}
-          style={pickerSelectStyles}
-        />
-
+        <View style={styles.inputWrapper}>
+          <Picker
+            selectedValue={selectedDest}
+            onValueChange={setSelectedDest}
+            style={styles.picker}
+            enabled={!!selectedOrig}
+            dropdownIconColor={COLORS.card}
+          >
+            <Picker.Item label="Selecciona ciudad de destino" value="" />
+            {availableDestinations.map(destID => {
+              const city = cities.find(c => c.id === destID);
+              return city ? <Picker.Item key={city.id} label={city.name} value={city.id} /> : null;
+            })}
+          </Picker>
+        </View>
+        <View style={styles.inputWrapper}>
+          <Picker
+            selectedValue={selectedSchedule}
+            onValueChange={setSelectedSchedule}
+            style={styles.picker}
+            enabled={!!selectedDest}
+            dropdownIconColor={COLORS.card}
+          >
+            <Picker.Item label={selectSchedule.length ? "Selecciona horario" : "No hay horarios"} value="" />
+            {selectSchedule.map(schedule => (
+              <Picker.Item
+                key={schedule.id}
+                label={`Salida: ${schedule.originTime} - Llegada: ${schedule.destinationTime}`}
+                value={schedule.id}
+              />
+            ))}
+          </Picker>
+        </View>
         <TouchableOpacity
           style={[
             styles.button,
-            (!selectedOrig || !selectedDest || !selectedSchedule || loading) && styles.disabledButton
+            !canQuery || loading ? styles.buttonDisabled : styles.buttonEnabled
           ]}
           onPress={fetchLocation}
-          disabled={!selectedOrig || !selectedDest || !selectedSchedule || loading}
+          disabled={!canQuery || loading}
+          activeOpacity={0.8}
         >
           {loading
-            ? <ActivityIndicator color="#fff" />
+            ? <ActivityIndicator color={COLORS.white} />
             : <Text style={styles.buttonText}>Consultar ubicación</Text>
           }
         </TouchableOpacity>
@@ -241,7 +286,9 @@ const TimeScreen = () => {
       >
         <View style={styles.modalBg}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalText}>{resultado}</Text>
+            <ScrollView>
+              <ModalContent resultado={resultado} />
+            </ScrollView>
             <TouchableOpacity onPress={() => setModalVisible(false)} style={styles.closeBtn}>
               <Text style={styles.closeBtnText}>Cerrar</Text>
             </TouchableOpacity>
@@ -255,12 +302,12 @@ const TimeScreen = () => {
 const styles = StyleSheet.create({
   bg: {
     flex: 1,
-    backgroundColor: '#000000',
+    backgroundColor: COLORS.background,
     justifyContent: 'center',
     alignItems: 'center'
   },
   card: {
-    backgroundColor: '#212121',
+    backgroundColor: COLORS.card,
     borderRadius: 16,
     padding: 24,
     width: '90%',
@@ -268,49 +315,70 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 12,
     elevation: 8,
-    marginBottom: 20
+    marginBottom: 20,
+    alignItems: 'center'
   },
   title: {
     fontSize: 28,
     fontWeight: 'bold',
-    color: '#EEEE',
+    color: COLORS.text,
     marginBottom: 24,
     marginTop: 12
   },
-  label: {
-    fontSize: 16,
-    marginTop: 8,
-    marginBottom: 2,
-    color: '#222',
-    borderRadius: 16
+  heading: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: COLORS.text,
+    marginBottom: 14,
+    textAlign: 'center'
+  },
+  inputWrapper: {
+    backgroundColor: COLORS.text,
+    borderRadius: 8,
+    marginBottom: 16,
+    width: '100%',
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: COLORS.inputBorder,
+    paddingHorizontal: 6,
+    paddingVertical: Platform.OS === 'ios' ? 8 : 0,
+  },
+  picker: {
+    height: 50,
+    width: '100%',
+    color: COLORS.inputBg,
+    backgroundColor: COLORS.text,
   },
   button: {
-    backgroundColor: '#ee7b18',
-    padding: 16,
+    marginTop: 8,
+    width: '100%',
+    paddingVertical: 14,
     borderRadius: 10,
-    marginTop: 24,
     alignItems: 'center',
-    shadowColor: '#ee7b18',
+    justifyContent: 'center',
     shadowOpacity: 0.25,
     shadowRadius: 5,
     elevation: 4
   },
-  disabledButton: {
-    backgroundColor: '#cccccc'
+  buttonEnabled: {
+    backgroundColor: COLORS.orange,
+  },
+  buttonDisabled: {
+    backgroundColor: COLORS.disabled,
   },
   buttonText: {
-    color: '#fff',
+    color: COLORS.white,
+    fontWeight: 'bold',
     fontSize: 18,
-    fontWeight: 'bold'
   },
   modalBg: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.3)',
+    backgroundColor: COLORS.modalBg,
     justifyContent: 'center',
     alignItems: 'center'
   },
   modalCard: {
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
     borderRadius: 14,
     padding: 28,
     alignItems: 'center',
@@ -322,42 +390,35 @@ const styles = StyleSheet.create({
   modalText: {
     fontSize: 18,
     color: '#333',
-    marginBottom: 24
+    marginBottom: 24,
+    textAlign: 'center'
+  },
+  modalTitle: {
+    fontWeight: 'bold',
+    fontSize: 20,
+    marginBottom: 12,
+    color: '#222'
+  },
+  modalStrong: {
+    fontWeight: 'bold',
+    fontSize: 16,
+    marginBottom: 6,
+    color: '#222'
+  },
+  modalNormal: {
+    fontWeight: 'normal',
+    color: '#333'
   },
   closeBtn: {
-    backgroundColor: '#ee7b18',
+    backgroundColor: COLORS.orange,
     borderRadius: 8,
     paddingVertical: 8,
-    paddingHorizontal: 32
+    paddingHorizontal: 32,
+    marginTop: 18
   },
   closeBtnText: {
-    color: '#fff',
+    color: COLORS.white,
     fontSize: 16
-  }
-});
-
-const pickerSelectStyles = StyleSheet.create({
-  inputIOS: {
-    fontSize: 16,
-    paddingVertical: 12,
-    paddingHorizontal: 10,
-    borderWidth: 1,
-    borderColor: '#ee7b18',
-    borderRadius: 16,
-    color: 'black',
-    marginBottom: 12,
-    backgroundColor: '#fafafa'
-  },
-  inputAndroid: {
-    fontSize: 16,
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    borderWidth: 1,
-    borderColor: '#ee7b18',
-    borderRadius: 16,
-    color: 'black',
-    marginBottom: 12,
-    backgroundColor: '#fafafa'
   }
 });
 

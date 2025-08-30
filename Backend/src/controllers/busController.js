@@ -8,7 +8,9 @@ import { get, ref } from 'firebase/database';
 import { db } from '../firebase/config.js';
 
 export const obtenerTiempoEstimado = async (req, res) => {
-  const { recorridoID, origin, destination, ciudadObjetivo } = req.query;
+  const { recorridoID, ciudadObjetivo } = req.query;
+
+  console.log('[REQ]', { recorridoID, ciudadObjetivo });
 
   // 1. Traer ciudades y recorridos de la DB
   const citiesRef = ref(db, 'Cities');
@@ -36,12 +38,8 @@ export const obtenerTiempoEstimado = async (req, res) => {
     return entry ? entry[0] : null;
   };
 
-  const originID = getCityIDByName(origin);
-  const destinationID = getCityIDByName(destination);
-  const targetID = getCityIDByName(ciudadObjetivo);
-
+  // Traer la ubicación y stops actuales desde Firebase
   const location = await getLocation(recorridoID);
-
   if (!location || location.error) {
     return res.json({
       error: true,
@@ -52,47 +50,62 @@ export const obtenerTiempoEstimado = async (req, res) => {
   // 2. Buscar el recorrido y la lista de cityIDs
   const recorridoObj = recorridos[recorridoID];
   const citiesArray = recorridoObj ? recorridoObj.cities.filter(Boolean) : [];
-
   const cityIDsArray = citiesArray.map(c => c.cityID);
 
-  const originIdx = cityIDsArray.indexOf(originID);
-  const destinationIdx = cityIDsArray.indexOf(destinationID);
+  // Determinar la ciudad más cercana a la ubicación actual del colectivo
+  let currentCityIdx = -1;
+  let currentCityID = null;
+  let minDist = Infinity;
+
+  // Matchear por coordenada: encontrar la ciudad más cercana a location.lat, location.lng
+  for (let i = 0; i < citiesArray.length; i++) {
+    const city = citiesArray[i];
+    if (!city.latitude || !city.longitude) continue;
+    const dLat = city.latitude - location.lat;
+    const dLng = city.longitude - location.lng;
+    const dist = Math.sqrt(dLat * dLat + dLng * dLng);
+    if (dist < minDist) {
+      minDist = dist;
+      currentCityIdx = i;
+      currentCityID = city.cityID;
+    }
+  }
+
+  // Si tu estructura de location tiene el nombre de la ciudad actual, podés usar:
+  // const currentCityID = getCityIDByName(location.currentCity);
+
+  const targetID = getCityIDByName(ciudadObjetivo);
   const targetIdx = cityIDsArray.indexOf(targetID);
 
-  console.log("Recorrido:", recorridoObj.name);
-  console.log("ciudadObjetivo:", ciudadObjetivo);
-  console.log("targetID:", targetID);
-  console.log("cityIDsArray:", cityIDsArray);
-  console.log("targetIdx:", targetIdx);
-  console.log("originID:", originID, "originIdx:", originIdx);
-  console.log("destinationID:", destinationID, "destinationIdx:", destinationIdx);
-  console.log("Stops:", (location.stops || []).map(s => s.name));
+  console.log('[CURRENT CITY]', { currentCityID, currentCityIdx });
+  console.log('[TARGET ID]', { targetID, targetIdx });
+  console.log('[cityIDsArray]', cityIDsArray);
+  if (Array.isArray(location.stops)) {
+    console.log('[STOPS NAMES]', location.stops.map(s => s.name));
+  } else {
+    console.log('[STOPS] No stops in location');
+  }
 
-  // 4. Lógica de validación de ciudad objetivo
+  // Validaciones
   if (targetIdx === -1) {
     return res.json({ error: true, texto: `🚏 ${ciudadObjetivo} no forma parte del recorrido.` });
   }
-  if (targetIdx < originIdx) {
-    return res.json({ error: true, texto: `El colectivo ya pasó por ${ciudadObjetivo}.` });
-  }
-  if (targetIdx > destinationIdx) {
-    return res.json({ error: true, texto: `El colectivo no llega a ${ciudadObjetivo} en este viaje.` });
-  }
-  // Si está en el tramo, pero no en stops, ya pasó
-  if (
-    targetIdx !== destinationIdx &&
-    !((location.stops || []).some(stop => normalize(stop.name) === normalize(ciudadObjetivo)))
-  ) {
+  if (targetIdx < currentCityIdx) {
     return res.json({ error: true, texto: `El colectivo ya pasó por ${ciudadObjetivo}.` });
   }
 
-  // ---- Lógica original a partir de acá: ----
+  // --- Lógica de paradas intermedias ---
+  // Solo las paradas entre la ubicación actual y el objetivo
+  const stopsInTramo = (location.stops || []).filter(stop => {
+    const stopID = getCityIDByName(stop.name);
+    const stopIdx = cityIDsArray.indexOf(stopID);
+    console.log(`[TRAMO FILTER] stop="${stop.name}" id="${stopID}" idx=${stopIdx} | currentCityIdx=${currentCityIdx}, targetIdx=${targetIdx}`);
+    return stopIdx > currentCityIdx && stopIdx < targetIdx;
+  });
 
-  const destino = await getCity(ciudadObjetivo);
-  if (!destino) return res.status(404).send("No se encontró la ciudad de destino.");
+  console.log('[STOPS IN TRAMO]', stopsInTramo.map(s => s.name));
 
-  // Usar los stops guardados en la DB como intermediates
-  const intermediates = (location.stops || []).map(stop => ({
+  const intermediates = stopsInTramo.map(stop => ({
     location: {
       latLng: {
         latitude: parseFloat(stop.coord.split(',')[0]),
@@ -103,6 +116,9 @@ export const obtenerTiempoEstimado = async (req, res) => {
 
   const cantidadParadas = intermediates.length;
   const minutosExtraPorParadas = cantidadParadas * 5;
+
+  const destino = await getCity(ciudadObjetivo);
+  if (!destino) return res.status(404).send("No se encontró la ciudad de destino.");
 
   const date = new Date();
   date.setMinutes(date.getMinutes() + 5);
@@ -169,24 +185,25 @@ export const obtenerTiempoEstimado = async (req, res) => {
       dateStyle: 'full', timeStyle: 'short'
     }).format(new Date(location.date));
 
-    res.json({
-      texto: `🚌 Tiempo estimado hasta ${ciudadObjetivo}: ${horas}h ${min}m.<br>
-      🕓 Hora estimada de llegada: ${horaEstimada} hs<br>
-      🌦️ Clima: ${weather}, visibilidad ${visibility}m.<br>
-      📅 Día: ${isWeekend ? 'Fin de semana' : 'Laboral'}${isHoliday ? ' y feriado' : ''}.<br>
-      ⏱️ Ajustes aplicados: clima +${Math.round((factorClima - 1) * 100)}%, día +${Math.round((dayAdjustmentFactor - 1) * 100)}%.<br>
-      🚏 Paradas intermedias: ${cantidadParadas} (+${minutosExtraPorParadas} min)<br>
-      📍 Última ubicación recibida: ${formattedDate}`,
-
-      mapa: {
-        currentLocation: { lat: location.lat, lng: location.lng },
-        destinationCoord: destino,
-        waypoints: intermediates.map(i => i.location.latLng)
-      }
-    });
-
-  } catch (error) {
-    console.error(error);
-    res.status(500).send("Error al calcular la ruta");
-  }
-};
+   res.json({
+    tiempo: `${horas}h ${min}m`,
+    hora: `${horaEstimada} hs`,
+    clima: `${weather}, visibilidad ${visibility}m.`,
+    dia: `${isWeekend ? 'Fin de semana' : 'Laboral'}${isHoliday ? ' y feriado' : ''}.`,
+    ajustes: `clima +${Math.round((factorClima - 1) * 100)}%, día +${Math.round((dayAdjustmentFactor - 1) * 100)}%.`,
+    paradas: `${cantidadParadas} (+${minutosExtraPorParadas} min)`,
+    ubicacion: formattedDate,
+    mapa: {
+      currentLocation: { lat: location.lat, lng: location.lng },
+      destinationCoord: destino,
+      waypoints: intermediates.map(i => i.location.latLng)
+    }
+  });
+} catch (error) {
+  console.error(error);
+  res.status(500).json({
+    error: true,
+    msg: "Error al calcular la ruta",
+    detalle: error.message
+  });
+}};

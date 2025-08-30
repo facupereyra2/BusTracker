@@ -5,6 +5,7 @@ import { onValue, ref, remove, set } from 'firebase/database';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Modal, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { db } from '../constants/firebaseConfig';
+import { COLORS } from '../styles/theme';
 
 const LOCATION_TASK_NAME = 'background-location-task';
 let globalShareData = {};
@@ -346,12 +347,12 @@ export default function LocationScreen() {
 const styles = StyleSheet.create({
   bg: {
     flex: 1,
-    backgroundColor: '#012121',
+    backgroundColor: COLORS.background,
     justifyContent: 'center',
     alignItems: 'center'
   },
   card: {
-    backgroundColor: '#212121',
+    backgroundColor: COLORS.card,
     borderRadius: 16,
     padding: 24,
     width: '90%',
@@ -365,45 +366,39 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 28,
     fontWeight: 'bold',
-    color: '#F4F4F4',
+    color: COLORS.text,
     marginBottom: 24,
     marginTop: 12
   },
   heading: {
     fontSize: 20,
     fontWeight: '600',
-    color: '#F4F4F4',
+    color: COLORS.text,
     marginBottom: 14,
     textAlign: 'center'
   },
   inputWrapper: {
-    backgroundColor: '#fafafa',
+    backgroundColor: COLORS.text,
     borderRadius: 8,
     marginBottom: 16,
     width: '100%',
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: '#ee7b18',
+    borderColor: COLORS.inputBorder,
     paddingHorizontal: 6,
     paddingVertical: Platform.OS === 'ios' ? 8 : 0,
   },
   picker: {
     height: 50,
     width: '100%',
-    color: '#212121',
-    backgroundColor: '#fafafa',
+    color: COLORS.inputBg,
+    backgroundColor: COLORS.text,
   },
   label: {
     fontSize: 17,
-    color: '#F4F4F4',
+    color: COLORS.text,
     textAlign: 'center',
     marginBottom: 8,
-  },
-  labelPicker: {
-    fontSize: 15,
-    color: '#ee7b18',
-    marginBottom: Platform.OS === 'ios' ? 2 : 0,
-    marginTop: Platform.OS === 'ios' ? 4 : 0,
   },
   button: {
     marginTop: 8,
@@ -412,33 +407,32 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#ee7b18',
     shadowOpacity: 0.25,
     shadowRadius: 5,
     elevation: 4
   },
   buttonEnabled: {
-    backgroundColor: '#ee7b18',
+    backgroundColor: COLORS.orange,
   },
   buttonDisabled: {
-    backgroundColor: '#cccccc',
+    backgroundColor: COLORS.disabled,
   },
   buttonTracking: {
-    backgroundColor: '#6dbf43',
+    backgroundColor: COLORS.blue,
   },
   buttonText: {
-    color: '#fff',
+    color: COLORS.white,
     fontWeight: 'bold',
     fontSize: 18,
   },
   modalBg: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.3)',
+    backgroundColor: COLORS.modalBg,
     justifyContent: 'center',
     alignItems: 'center'
   },
   modalCard: {
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
     borderRadius: 14,
     padding: 28,
     alignItems: 'center',
@@ -454,13 +448,13 @@ const styles = StyleSheet.create({
     textAlign: 'center'
   },
   closeBtn: {
-    backgroundColor: '#ee7b18',
+    backgroundColor: COLORS.orange,
     borderRadius: 8,
     paddingVertical: 8,
     paddingHorizontal: 32
   },
   closeBtnText: {
-    color: '#fff',
+    color: COLORS.white,
     fontSize: 16
   }
 });
