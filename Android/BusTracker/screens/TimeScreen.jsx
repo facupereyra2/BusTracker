@@ -125,70 +125,107 @@ const TimeScreen = () => {
 
   // Consultar ubicación
   const fetchLocation = async () => {
+    
     if (cities.length === 0) {
       setResultado({ error: true, msg: "Las ciudades aún no se cargaron. Esperá unos segundos." });
       setModalVisible(true);
       return;
     }
-    try {
-      if (!selectedOrig || !selectedDest || !selectedSchedule) {
-        setResultado({ error: true, msg: "Por favor seleccioná origen, destino y horario." });
-        setModalVisible(true);
-        return;
-      }
-      const [recorridoID, originTime] = selectedSchedule.split("_");
-      const fullRoute = await getFullRoute(selectedOrig, selectedDest, originTime);
-      if (!fullRoute) {
-        setResultado({ error: true, msg: "No se encontró un recorrido válido para los datos ingresados." });
-        setModalVisible(true);
-        return;
-      }
+    if (!selectedOrig || !selectedDest || !selectedSchedule) {
+      setResultado({ error: true, msg: "Por favor seleccioná origen, destino y horario." });
+    setModalVisible(true);
+    return;
+  }
 
-      const queryParams = new URLSearchParams({
-        recorridoID: fullRoute.key,
-        origin: getCityNameById(selectedOrig),
-        destination: getCityNameById(selectedDest),
-        ciudadObjetivo: getCityNameById(selectedOrig),
-      });
-
-      setLoading(true);
-      const response = await fetch(`http://192.168.1.38:3000/distance?${queryParams.toString()}`);
-      const text = await response.text();
-      let data;
-      try {
-        data = JSON.parse(text);
-      } catch {
-        setResultado({ error: true, msg: text });
-        setModalVisible(true);
-        return;
-      }
-
-      setResultado(data);
+  setLoading(true);
+  try {
+    const [recorridoID, originTime] = selectedSchedule.split("_");
+    const fullRoute = await getFullRoute(selectedOrig, selectedDest, originTime);
+    if (!fullRoute) {
+      setResultado({ error: true, msg: "No se encontró un recorrido válido para los datos ingresados." });
       setModalVisible(true);
-    } catch (err) {
-      setResultado({ error: true, msg: `Hubo un error al consultar la ubicación.\n${err.message}` });
-      setModalVisible(true);
-    } finally {
-      setLoading(false);
+      return;
     }
-  };
+
+    const queryParams = new URLSearchParams({
+      recorridoID: fullRoute.key,
+      origin: getCityNameById(selectedOrig),
+      destination: getCityNameById(selectedDest),
+      ciudadObjetivo: getCityNameById(selectedOrig),
+    });
+
+    const url = `https://bustracker-kfkx.onrender.com/distance?${queryParams.toString()}`;
+    console.log("Consultando backend:", url);
+
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("Respuesta no OK:", errorText);
+      setResultado({ error: true, msg: `Error del servidor: ${errorText}` });
+      setModalVisible(true);
+      return;
+    }
+
+    let data;
+    try {
+      data = await response.json(); // Espera JSON del backend
+    } catch (parseErr) {
+      const text = await response.text();
+      console.error("Error de parseo JSON:", text);
+      setResultado({ error: true, msg: `Error de formato del backend:\n${text}` });
+      setModalVisible(true);
+      return;
+    }
+
+    setResultado(data);
+    setModalVisible(true);
+    console.log('Resultado mapa:', resultado.mapa);
+  } catch (err) {
+    console.error("Error en fetchLocation:", err);
+    setResultado({ error: true, msg: `Hubo un error al consultar la ubicación.\n${err.message}` });
+    setModalVisible(true);
+  } finally {
+    setLoading(false);
+  }
+};
 
   // Condición para habilitar el botón
   const canQuery = selectedOrig && selectedDest && selectedSchedule;
 
-  // Modal de resultado
-  function ModalContent({ resultado }) {
-    if (!resultado) return null;
-    if (resultado.error || resultado.msg) {
-      return (
-        <Text style={[styles.modalText, { color: '#b71c1c' }]}>
-          {resultado.msg || resultado.texto || "Ocurrió un error"}
-        </Text>
-      );
-    }
+  function isValidCoord(coord) {
+  return (
+    coord &&
+    typeof coord.latitude === 'number' &&
+    typeof coord.longitude === 'number' &&
+    !isNaN(coord.latitude) &&
+    !isNaN(coord.longitude)
+  );
+}
+
+function ModalContent({ resultado }) {
+  if (!resultado) return null;
+  if (resultado.error || resultado.msg) {
+    console.log('Resultado mapa:', resultado.mapa);
+    return (
+      <Text style={[styles.modalText, { color: '#b71c1c' }]}>
+        {resultado.msg || resultado.texto || "Ocurrió un error"}
+      </Text>
+    );
+  }
+
+  const mapData = resultado.mapa;
+  const mapIsValid =
+    mapData &&
+    isValidCoord(mapData.currentLocation) &&
+    isValidCoord(mapData.destinationCoord) &&
+    Array.isArray(mapData.waypoints) &&
+    mapData.waypoints.every(isValidCoord);
 
     return (
-      <View style={{ alignItems: 'flex-start', width: '100%' }}>
+      <View style={{ height: '10%' }}>
+      <View style={{ height: '20%' }}>
+      <View style={{ alignItems: 'flex-start', width: '100%'}}>
         <Text style={styles.modalTitle}>Consulta de llegada</Text>
         <Text style={styles.modalStrong}>
           {resultado.ciudadObjetivo ? `🚌 Tiempo estimado hasta ${resultado.ciudadObjetivo}: ` : "🚌 Tiempo estimado: "}
@@ -200,13 +237,19 @@ const TimeScreen = () => {
         <Text style={styles.modalStrong}>⏱️ Ajustes aplicados: <Text style={styles.modalNormal}>{resultado.ajustes}</Text></Text>
         <Text style={styles.modalStrong}>🚏 Paradas intermedias: <Text style={styles.modalNormal}>{resultado.paradas}</Text></Text>
         <Text style={styles.modalStrong}>📍 Última ubicación recibida: <Text style={styles.modalNormal}>{resultado.ubicacion}</Text></Text>
-        {resultado.mapa && (
-          <MapPreview
-            currentLocation={resultado.mapa.currentLocation}
-            destinationCoord={resultado.mapa.destinationCoord}
-            waypoints={resultado.mapa.waypoints}
-          />
-        )}
+        {mapIsValid ? (
+        <MapPreview
+          currentLocation={mapData.currentLocation}
+          destinationCoord={mapData.destinationCoord}
+          waypoints={mapData.waypoints}
+        />
+      ) : mapData ? (
+        <Text style={{ color: "#b71c1c", marginTop: 10 }}>
+          Error: Los datos del mapa no son válidos.
+        </Text>
+      ) : null}
+      </View>
+      </View>
       </View>
     );
   }
@@ -377,15 +420,21 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center'
   },
-  modalCard: {
-    backgroundColor: COLORS.white,
-    borderRadius: 14,
-    padding: 28,
+    modalCard: {
+    backgroundColor: COLORS.text,
+    borderRadius: 24,
+    padding: 22,
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 12
+    width: '87%',
+    maxWidth: 370,
+    minHeight: 120,
+    shadowColor: "#000",
+    shadowOpacity: 0.20,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 28,
+    marginVertical: 32,
+    zIndex: 100,
   },
   modalText: {
     fontSize: 18,

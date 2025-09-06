@@ -194,10 +194,19 @@ export const obtenerTiempoEstimado = async (req, res) => {
     paradas: `${cantidadParadas} (+${minutosExtraPorParadas} min)`,
     ubicacion: formattedDate,
     mapa: {
-      currentLocation: { lat: location.lat, lng: location.lng },
-      destinationCoord: destino,
-      waypoints: intermediates.map(i => i.location.latLng)
-    }
+  currentLocation: {
+    latitude: Number(location.lat),
+    longitude: Number(location.lng)
+  },
+  destinationCoord: {
+    latitude: Number(destino.latitude),
+    longitude: Number(destino.longitude)
+  },
+  waypoints: intermediates.map(i => ({
+    latitude: Number(i.location.latLng.latitude),
+    longitude: Number(i.location.latLng.longitude)
+  }))
+}
   });
 } catch (error) {
   console.error(error);

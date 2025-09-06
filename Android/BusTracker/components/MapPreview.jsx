@@ -28,11 +28,14 @@ function getRegionForCoordinates(points) {
 }
 
 const MapPreview = ({ currentLocation, destinationCoord, waypoints = [] }) => {
+  console.log('currentLocation:', currentLocation);
+  console.log('destinationCoord:', destinationCoord); 
+console.log('waypoints:', waypoints);
   if (
     !currentLocation ||
     !destinationCoord ||
-    typeof currentLocation.lat !== 'number' ||
-    typeof currentLocation.lng !== 'number' ||
+    typeof currentLocation.latitude !== 'number' ||
+    typeof currentLocation.longitude !== 'number' ||
     typeof destinationCoord.latitude !== 'number' ||
     typeof destinationCoord.longitude !== 'number'
   ) {
@@ -40,12 +43,10 @@ const MapPreview = ({ currentLocation, destinationCoord, waypoints = [] }) => {
   }
 
   const routePoints = [
-    { latitude: currentLocation.lat, longitude: currentLocation.lng },
+    { latitude: currentLocation.latitude, longitude: currentLocation.longitude },
     ...waypoints.map(coord =>
       'latitude' in coord && 'longitude' in coord
         ? { latitude: coord.latitude, longitude: coord.longitude }
-        : 'lat' in coord && 'lng' in coord
-        ? { latitude: coord.lat, longitude: coord.lng }
         : null
     ).filter(Boolean),
     { latitude: destinationCoord.latitude, longitude: destinationCoord.longitude }

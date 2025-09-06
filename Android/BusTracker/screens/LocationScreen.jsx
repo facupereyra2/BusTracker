@@ -5,6 +5,7 @@ import { onValue, ref, remove, set } from 'firebase/database';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Modal, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { db } from '../constants/firebaseConfig';
+import { useLocationTracking } from "../context/LocationContext";
 import { COLORS } from '../styles/theme';
 
 const LOCATION_TASK_NAME = 'background-location-task';
@@ -86,6 +87,7 @@ export default function LocationScreen() {
   const [modalVisible, setModalVisible] = useState(false);
   const [modalMsg, setModalMsg] = useState('');
   const [recorridos, setRecorridos] = useState({});
+  const { isTracking, setIsTracking } = useLocationTracking();
 
   // Cargar ciudades y recorridos
   useEffect(() => {
@@ -165,6 +167,10 @@ export default function LocationScreen() {
     setRouteId('');
   }, [origin, destination, cities, recorridos]);
 
+    useEffect(() => {
+    setTracking(isTracking);
+  }, [isTracking]);
+
   // Guardar datos seleccionados para background task e inicializar stops SIEMPRE
   useEffect(() => {
     if (!origin || !originCoord || !destination || !selectedSchedule) return;
@@ -203,52 +209,91 @@ export default function LocationScreen() {
 
   const canShare = origin && destination && selectedSchedule;
 
-  const startBackgroundTracking = async () => {
-  // Limpiar ubicación previa en la DB (opcional pero recomendado)
-  await remove(ref(db, `location/${globalShareData.routeId}`));
-
-  // FORZAR REINICIO DE STOPS
-  const originID = Object.keys(cities).find(key => cities[key].name === origin);
-  const destinationID = Object.keys(cities).find(key => cities[key].name === destination);
-  const recorridoObj = recorridos[selectedSchedule];
-  const citiesArray = recorridoObj ? recorridoObj.cities.filter(Boolean) : [];
-  globalShareData.stops = getIntermediateStops(
-    citiesArray,
-    cities,
-    originID,
-    destinationID
-  );
-
-  let { status } = await Location.requestForegroundPermissionsAsync();
-  if (status !== 'granted') {
-    setModalMsg('No se puede acceder a la ubicación');
-    setModalVisible(true);
-    return;
+async function showLocationTrackingNotification() {
+  try {
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: "Compartiendo ubicación",
+        body: "Toca aquí para dejar de compartir ubicación",
+        data: { screen: 'StopLocation' }
+      },
+      trigger: null
+    });
+    console.log("Notificación enviada correctamente");
+  } catch (e) {
+    console.log("Error al enviar la notificación:", e);
+    // Incluso podrías mostrar un modal con el error
   }
-  let { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
-  if (bgStatus !== 'granted') {
-    setModalMsg('No se puede acceder a la ubicación en segundo plano');
+}
+
+const startBackgroundTracking = async () => {
+  try {
+    console.log('Iniciando seguimiento de ubicación en segundo plano');
+    await showLocationTrackingNotification();
+    // Limpiar ubicación previa en la DB
+    if (globalShareData.routeId) {
+      await remove(ref(db, `location/${globalShareData.routeId}`));
+    }
+
+    // FORZAR REINICIO DE STOPS
+    const originID = Object.keys(cities).find(key => cities[key].name === origin);
+    const destinationID = Object.keys(cities).find(key => cities[key].name === destination);
+    const recorridoObj = recorridos[selectedSchedule];
+    const citiesArray = recorridoObj ? recorridoObj.cities.filter(Boolean) : [];
+    globalShareData.stops = getIntermediateStops(
+      citiesArray,
+      cities,
+      originID,
+      destinationID
+    );
+
+    // 1. Solicitar permiso foreground
+    let { status: fgStatus } = await Location.requestForegroundPermissionsAsync();
+    if (fgStatus !== 'granted') {
+      setModalMsg('No se puede acceder a la ubicación (foreground)');
+      setModalVisible(true);
+      console.log('Permiso de ubicación foreground DENEGADO');
+      return;
+    }
+
+    // 2. Solicitar permiso background (después de foreground)
+    let { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
+    if (bgStatus !== 'granted') {
+      setModalMsg('No se puede acceder a la ubicación en segundo plano.\nPara Android 14/15, habilitá "Permitir siempre" en Ajustes > Apps > BusTracker > Permisos > Ubicación.');
+      setModalVisible(true);
+      console.log('Permiso de ubicación background DENEGADO');
+      return;
+    }
+
+    // 3. Iniciar el tracking en background
+    await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
+      accuracy: Location.Accuracy.Highest,
+      timeInterval: 10000,
+      distanceInterval: 0,
+      showsBackgroundLocationIndicator: true,
+      foregroundService: {
+        notificationTitle: 'Compartiendo ubicación',
+        notificationBody: 'Tu ubicación se está compartiendo en segundo plano.',
+      },
+    });
+
+    setTracking(true);
+    setIsTracking(true);
+    setModalMsg('¡Listo! Tu ubicación se está compartiendo.');
     setModalVisible(true);
-    return;
+    console.log('Tracking iniciado en background');
+  } catch (e) {
+    console.log("Error en startBackgroundTracking:", e);
+    setModalMsg('Error al iniciar el tracking: ' + e.message);
+    setModalVisible(true);
+    console.log('Error en startBackgroundTracking:', e);
   }
-  await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
-    accuracy: Location.Accuracy.Highest,
-    timeInterval: 10000, // cada 10 segundos
-    distanceInterval: 0,
-    showsBackgroundLocationIndicator: true,
-    foregroundService: {
-      notificationTitle: 'Compartiendo ubicación',
-      notificationBody: 'Tu ubicación se está compartiendo en segundo plano.',
-    },
-  });
-  setTracking(true);
-  setModalMsg('¡Listo! Tu ubicación se está compartiendo.');
-  setModalVisible(true);
 };
 
   const stopBackgroundTracking = async () => {
     await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
     setTracking(false);
+    setIsTracking(false); 
     setModalMsg('Dejaste de compartir tu ubicación.');
     setModalVisible(true);
   };
