@@ -33,14 +33,14 @@ function getCityIDByName(name, cities) {
 function haversineDistance(coordA, coordB) {
   if (!coordA || !coordB) return Infinity
   const R = 6371e3
-  const φ1 = coordA.lat * Math.PI/180
-  const φ2 = coordB.lat * Math.PI/180
-  const Δφ = (coordB.lat-coordA.lat) * Math.PI/180
-  const Δλ = (coordB.lng-coordA.lng) * Math.PI/180
-  const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
-            Math.cos(φ1) * Math.cos(φ2) *
-            Math.sin(Δλ/2) * Math.sin(Δλ/2)
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))
+  const φ1 = coordA.lat * Math.PI / 180
+  const φ2 = coordB.lat * Math.PI / 180
+  const Δφ = (coordB.lat - coordA.lat) * Math.PI / 180
+  const Δλ = (coordB.lng - coordA.lng) * Math.PI / 180
+  const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+    Math.cos(φ1) * Math.cos(φ2) *
+    Math.sin(Δλ / 2) * Math.sin(Δλ / 2)
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
   return R * c
 }
 
@@ -82,11 +82,15 @@ export const obtenerTiempoEstimado = async (req, res) => {
 
   // 4. Detectar ciudad actual robustamente
   const DIST_THRESHOLD = 700 // metros
-  const busCoord = locationObj.location
-    ? { lat: Number(locationObj.location.latitude), lng: Number(locationObj.location.longitude) }
-    : null
 
-  console.log(">>> [BUSCOORD DEBUG] busCoord:", busCoord)
+  const busCoord =
+    locationObj.location && !isNaN(locationObj.location.latitude) && !isNaN(locationObj.location.longitude)
+      ? { lat: Number(locationObj.location.latitude), lng: Number(locationObj.location.longitude) }
+      : (typeof locationObj.lat === "number" && typeof locationObj.lng === "number")
+        ? { lat: Number(locationObj.lat), lng: Number(locationObj.lng) }
+        : null;
+
+  console.log(">>> [BUSCOORD DEBUG] busCoord:", busCoord);
 
   // Buscar ciudad más cercana del recorrido
   let closestIdx = -1, closestID = null, minDist = Infinity
