@@ -7,7 +7,7 @@ import { db } from '../firebase/config.js'
 // Helper para parsear coord string -> { lat, lng }
 function parseCoord(coordStr) {
   if (!coordStr) return null
-  let [lat, lng] = coordStr.split(',').map(Number)
+  let [lat, lng] = coordStr.split(',').map(s => Number(s.trim()))
   return { lat, lng }
 }
 
@@ -47,6 +47,9 @@ function haversineDistance(coordA, coordB) {
 export const obtenerTiempoEstimado = async (req, res) => {
   const { recorridoID, ciudadObjetivo } = req.query
 
+  // --- Debug de entrada ---
+  console.log(">>> [REQ DEBUG] recorridoID:", recorridoID, "ciudadObjetivo:", ciudadObjetivo)
+
   // 1. Traer Cities y Recorridos de la DB
   const citiesRef = ref(db, 'Cities')
   const recorridosRef = ref(db, 'Recorridos')
@@ -66,16 +69,24 @@ export const obtenerTiempoEstimado = async (req, res) => {
     })
   }
 
+  // Debug: mostrar la ubicación recibida
+  console.log(">>> [LOCATION DEBUG] locationObj:", JSON.stringify(locationObj))
+
   // 3. Buscar el recorrido y array de ciudades
   const recorridoObj = recorridos[recorridoID]
   const citiesArray = recorridoObj ? recorridoObj.cities.filter(Boolean) : []
   const cityIDsArray = citiesArray.map(c => c.cityID)
+
+  // Debug: mostrar citiesArray
+  console.log(">>> [CITIES DEBUG] citiesArray:", citiesArray.map((c, i) => ({ i, cityID: c.cityID, name: cities[c.cityID]?.name })))
 
   // 4. Detectar ciudad actual robustamente
   const DIST_THRESHOLD = 700 // metros
   const busCoord = locationObj.location
     ? { lat: Number(locationObj.location.latitude), lng: Number(locationObj.location.longitude) }
     : null
+
+  console.log(">>> [BUSCOORD DEBUG] busCoord:", busCoord)
 
   // Buscar ciudad más cercana del recorrido
   let closestIdx = -1, closestID = null, minDist = Infinity
@@ -85,6 +96,7 @@ export const obtenerTiempoEstimado = async (req, res) => {
     if (!cityData || !cityData.coord) continue
     const cityCoord = parseCoord(cityData.coord)
     const dist = haversineDistance(busCoord, cityCoord)
+    console.log(`>>> Comparando con ciudad ${cityData.name} (${cityID}): dist = ${dist} m, busCoord = ${JSON.stringify(busCoord)}, cityCoord = ${JSON.stringify(cityCoord)}`)
     if (dist < minDist) {
       minDist = dist
       closestIdx = i
@@ -103,6 +115,11 @@ export const obtenerTiempoEstimado = async (req, res) => {
   // Si la ubicación está antes de la primera ciudad, error
   if (closestIdx === 0 && minDist > DIST_THRESHOLD) {
     return res.json({ error: true, texto: "No se pudo determinar la ciudad actual del colectivo." })
+  }
+
+  // Validación extra: si busCoord es inválido, error
+  if (!busCoord || isNaN(busCoord.lat) || isNaN(busCoord.lng)) {
+    return res.json({ error: true, texto: "No se pudo obtener las coordenadas actuales del colectivo." })
   }
 
   // 5. Determinar ciudad objetivo
