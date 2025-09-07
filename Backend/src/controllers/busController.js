@@ -1,131 +1,161 @@
-import {
-  getLocation,
-  getCity,
-} from '../services/busServices.js'
-import { getHolidays } from '../utils/holiday.js';
-import axios from 'axios';
-import { get, ref } from 'firebase/database';
-import { db } from '../firebase/config.js';
+import { getLocation, getCity } from '../services/busServices.js'
+import { getHolidays } from '../utils/holiday.js'
+import axios from 'axios'
+import { get, ref } from 'firebase/database'
+import { db } from '../firebase/config.js'
+
+// Helpers
+function normalize(str) {
+  return (str || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+}
+function getCityIDByName(name, cities) {
+  if (!name) return null;
+  const entry = Object.entries(cities).find(
+    ([_, val]) => val && val.name && typeof val.name === "string" && normalize(val.name) === normalize(name)
+  );
+  return entry ? entry[0] : null;
+}
+function parseCoord(coordStr) {
+  if (!coordStr) return null;
+  let [lat, lng] = coordStr.split(',').map(s => Number(s.trim()));
+  return { lat, lng };
+}
 
 export const obtenerTiempoEstimado = async (req, res) => {
   const { recorridoID, ciudadObjetivo } = req.query;
 
-  console.log('[REQ]', { recorridoID, ciudadObjetivo });
-
-  // 1. Traer ciudades y recorridos de la DB
+  // --- DB fetch ---
   const citiesRef = ref(db, 'Cities');
   const recorridosRef = ref(db, 'Recorridos');
-  const [citiesSnap, recorridosSnap] = await Promise.all([get(citiesRef), get(recorridosRef)]);
-  if (!citiesSnap.exists() || !recorridosSnap.exists()) {
+  const locationRef = ref(db, `location/${recorridoID}`);
+
+  const [citiesSnap, recorridosSnap, locationSnap] = await Promise.all([
+    get(citiesRef), get(recorridosRef), get(locationRef)
+  ]);
+
+  if (!citiesSnap.exists() || !recorridosSnap.exists() || !locationSnap.exists()) {
     return res.status(500).json({ error: true, texto: "Error accediendo a la base de datos." });
   }
+
   const cities = citiesSnap.val();
   const recorridos = recorridosSnap.val();
+  const locationObj = locationSnap.val();
 
-  function normalize(str) {
-    return (str || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
-  }
-
-  const getCityIDByName = (name) => {
-    if (!name) return null;
-    const entry = Object.entries(cities).find(
-      ([_, val]) =>
-        val &&
-        val.name &&
-        typeof val.name === "string" &&
-        normalize(val.name) === normalize(name)
-    );
-    return entry ? entry[0] : null;
-  };
-
-  // Traer la ubicación y stops actuales desde Firebase
-  const location = await getLocation(recorridoID);
-  if (!location || location.error) {
-    return res.json({
-      error: true,
-      texto: location?.error || "No hay información de ubicación."
-    });
-  }
-
-  // 2. Buscar el recorrido y la lista de cityIDs
+  // --- Recorrido completo ---
   const recorridoObj = recorridos[recorridoID];
-  const citiesArray = recorridoObj ? recorridoObj.cities.filter(Boolean) : [];
+  if (!recorridoObj) return res.json({ error: true, texto: "Recorrido no encontrado." });
+  const citiesArray = recorridoObj.cities.filter(Boolean); // [{cityID, ...}]
   const cityIDsArray = citiesArray.map(c => c.cityID);
 
-  // Determinar la ciudad más cercana a la ubicación actual del colectivo
-  let currentCityIdx = -1;
-  let currentCityID = null;
-  let minDist = Infinity;
+  // --- Ciudad objetivo ---
+  const objetivoID = getCityIDByName(ciudadObjetivo, cities);
+  if (!objetivoID) {
+    return res.json({ error: true, texto: `La ciudad ${ciudadObjetivo} no existe en el sistema.` });
+  }
+  const objetivoIdx = cityIDsArray.indexOf(objetivoID);
+  if (objetivoIdx === -1) {
+    return res.json({ error: true, texto: `La ciudad ${ciudadObjetivo} no está en el recorrido.` });
+  }
 
-  // Matchear por coordenada: encontrar la ciudad más cercana a location.lat, location.lng
+  // --- Ubicación actual del colectivo ---
+  const busCoord = locationObj.location
+    ? { lat: Number(locationObj.location.latitude), lng: Number(locationObj.location.longitude) }
+    : null;
+  if (!busCoord || isNaN(busCoord.lat) || isNaN(busCoord.lng)) {
+    return res.json({ error: true, texto: "No se pudo obtener la ubicación actual del colectivo." });
+  }
+
+  // --- Paradas intermedias restantes en este viaje ---
+  const stops = Array.isArray(locationObj.stops) ? locationObj.stops : [];
+  // stops = [{name, coord}, ...]
+
+  // --- Determinar ciudad actual y su índice ---
+  // Defino ciudad actual como la más cercana al bus
+  let currentCityIdx = -1;
+  let minDist = Infinity;
   for (let i = 0; i < citiesArray.length; i++) {
-    const city = citiesArray[i];
-    if (!city.latitude || !city.longitude) continue;
-    const dLat = city.latitude - location.lat;
-    const dLng = city.longitude - location.lng;
+    const cityData = cities[citiesArray[i].cityID];
+    if (!cityData || !cityData.coord) continue;
+    const cityCoord = parseCoord(cityData.coord);
+    if (!cityCoord) continue;
+    const dLat = cityCoord.lat - busCoord.lat;
+    const dLng = cityCoord.lng - busCoord.lng;
     const dist = Math.sqrt(dLat * dLat + dLng * dLng);
     if (dist < minDist) {
       minDist = dist;
       currentCityIdx = i;
-      currentCityID = city.cityID;
     }
   }
 
-  // Si tu estructura de location tiene el nombre de la ciudad actual, podés usar:
-  // const currentCityID = getCityIDByName(location.currentCity);
-
-  const targetID = getCityIDByName(ciudadObjetivo);
-  const targetIdx = cityIDsArray.indexOf(targetID);
-
-  console.log('[CURRENT CITY]', { currentCityID, currentCityIdx });
-  console.log('[TARGET ID]', { targetID, targetIdx });
-  console.log('[cityIDsArray]', cityIDsArray);
-  if (Array.isArray(location.stops)) {
-    console.log('[STOPS NAMES]', location.stops.map(s => s.name));
-  } else {
-    console.log('[STOPS] No stops in location');
-  }
-
-  // Validaciones
-  if (targetIdx === -1) {
-    return res.json({ error: true, texto: `🚏 ${ciudadObjetivo} no forma parte del recorrido.` });
-  }
-  if (targetIdx < currentCityIdx) {
+  // --- Determinar si ya pasó por ciudadObjetivo ---
+  if (objetivoIdx < currentCityIdx) {
     return res.json({ error: true, texto: `El colectivo ya pasó por ${ciudadObjetivo}.` });
   }
 
-  // --- Lógica de paradas intermedias ---
-  // Solo las paradas entre la ubicación actual y el objetivo
-  const stopsInTramo = (location.stops || []).filter(stop => {
-    const stopID = getCityIDByName(stop.name);
-    const stopIdx = cityIDsArray.indexOf(stopID);
-    console.log(`[TRAMO FILTER] stop="${stop.name}" id="${stopID}" idx=${stopIdx} | currentCityIdx=${currentCityIdx}, targetIdx=${targetIdx}`);
-    return stopIdx > currentCityIdx && stopIdx < targetIdx;
-  });
+  // --- stopsNames para comparar ---
+  const stopsNamesNorm = stops.map(s => normalize(s.name));
 
-  console.log('[STOPS IN TRAMO]', stopsInTramo.map(s => s.name));
+  // --- Paradas a incluir en el tramo ---
+  // Si la ciudad objetivo está en stops, solo incluís las paradas entre la ciudad actual y objetivo
+  // Si NO está en stops, usás todas las paradas del recorrido entre la ciudad actual y objetivo, aunque no estén en stops (o sea, aunque el viaje no se detenga ahí, igual pasa por ahí)
 
-  const intermediates = stopsInTramo.map(stop => ({
-    location: {
-      latLng: {
-        latitude: parseFloat(stop.coord.split(',')[0]),
-        longitude: parseFloat(stop.coord.split(',')[1])
-      }
-    }
-  }));
+  // --- Construcción de paradas intermedias ---
+  let intermediates = [];
+  let numInterStops = 0;
+  let minutosExtraPorParadas = 0;
+  if (stopsNamesNorm.includes(normalize(ciudadObjetivo))) {
+    // Va a detenerse (stop) en ciudadObjetivo, solo incluye stops que están entre la ciudad actual y objetivo
+    intermediates = stops
+      .filter(stop => {
+        const stopID = getCityIDByName(stop.name, cities);
+        const stopIdx = cityIDsArray.indexOf(stopID);
+        return stopIdx > currentCityIdx && stopIdx < objetivoIdx;
+      })
+      .map(stop => ({
+        location: {
+          latLng: {
+            latitude: parseCoord(stop.coord)?.lat,
+            longitude: parseCoord(stop.coord)?.lng
+          }
+        }
+      }));
+    numInterStops = intermediates.length;
+    minutosExtraPorParadas = numInterStops * 5;
+  } else {
+    // Puede que ciudadObjetivo no sea parada del viaje, pero sí está en el recorrido
+    // Armo paradas intermedias como todas las stops que estén entre la ciudad actual y objetivo (del recorrido completo)
+    intermediates = stops
+      .filter(stop => {
+        const stopID = getCityIDByName(stop.name, cities);
+        const stopIdx = cityIDsArray.indexOf(stopID);
+        return stopIdx > currentCityIdx && stopIdx < objetivoIdx;
+      })
+      .map(stop => ({
+        location: {
+          latLng: {
+            latitude: parseCoord(stop.coord)?.lat,
+            longitude: parseCoord(stop.coord)?.lng
+          }
+        }
+      }));
+    numInterStops = intermediates.length;
+    minutosExtraPorParadas = numInterStops * 5;
+  }
 
-  const cantidadParadas = intermediates.length;
-  const minutosExtraPorParadas = cantidadParadas * 5;
+  // --- Coordenadas destino ---
+  const destinoObj = cities[objetivoID];
+  if (!destinoObj || !destinoObj.coord) {
+    return res.status(404).json({ error: true, texto: "No se encontró la ciudad objetivo en la base." });
+  }
+  const destinoCoord = parseCoord(destinoObj.coord);
 
-  const destino = await getCity(ciudadObjetivo);
-  if (!destino) return res.status(404).send("No se encontró la ciudad de destino.");
-
+  // --- Google Maps API ---
   const date = new Date();
   date.setMinutes(date.getMinutes() + 5);
 
   const requestBody = {
-    origin: { location: { latLng: { latitude: location.lat, longitude: location.lng } } },
-    destination: { location: { latLng: { latitude: destino.latitude, longitude: destino.longitude } } },
+    origin: { location: { latLng: { latitude: busCoord.lat, longitude: busCoord.lng } } },
+    destination: { location: { latLng: { latitude: destinoCoord.lat, longitude: destinoCoord.lng } } },
     intermediates,
     travelMode: "DRIVE",
     routingPreference: "TRAFFIC_AWARE",
@@ -145,7 +175,7 @@ export const obtenerTiempoEstimado = async (req, res) => {
       }
     );
 
-    const clima = await axios.get(`https://api.openweathermap.org/data/2.5/weather?lat=${location.lat}&lon=${location.lng}&appid=d3918607c24dc94a2dd83e3a36f7bd3c&units=metric&lang=es`);
+    const clima = await axios.get(`https://api.openweathermap.org/data/2.5/weather?lat=${busCoord.lat}&lon=${busCoord.lng}&appid=d3918607c24dc94a2dd83e3a36f7bd3c&units=metric&lang=es`);
     const weather = clima.data.weather[0].main;
     const visibility = clima.data.visibility;
 
@@ -183,22 +213,23 @@ export const obtenerTiempoEstimado = async (req, res) => {
 
     const formattedDate = new Intl.DateTimeFormat('es-AR', {
       dateStyle: 'full', timeStyle: 'short'
-    }).format(new Date(location.date));
+    }).format(new Date(locationObj.date));
 
-   res.json({
-    tiempo: `${horas}h ${min}m`,
-    hora: `${horaEstimada} hs`,
-    clima: `${weather}, visibilidad ${visibility}m.`,
-    dia: `${isWeekend ? 'Fin de semana' : 'Laboral'}${isHoliday ? ' y feriado' : ''}.`,
-    ajustes: `clima +${Math.round((factorClima - 1) * 100)}%, día +${Math.round((dayAdjustmentFactor - 1) * 100)}%.`,
-    paradas: `${cantidadParadas} (+${minutosExtraPorParadas} min)`,
-    ubicacion: formattedDate,
+    return res.json({
+      tiempo: `${horas}h ${min}m`,
+      hora: `${horaEstimada} hs`,
+      clima: `${weather}, visibilidad ${visibility}m.`,
+      dia: `${isWeekend ? 'Fin de semana' : 'Laboral'}${isHoliday ? ' y feriado' : ''}.`,
+      ajustes: `clima +${Math.round((factorClima - 1) * 100)}%, día +${Math.round((dayAdjustmentFactor - 1) * 100)}%.`,
+      paradas: `${numInterStops} (+${minutosExtraPorParadas} min)`,
+      ubicacion: formattedDate,
     });
-} catch (error) {
-  console.error(error);
-  res.status(500).json({
-    error: true,
-    msg: "Error al calcular la ruta",
-    detalle: error.message
-  });
-}};
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({
+      error: true,
+      msg: "Error al calcular la ruta",
+      detalle: error.message
+    });
+  }
+};
