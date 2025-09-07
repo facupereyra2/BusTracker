@@ -1,185 +1,137 @@
-import { getLocation, getCity } from '../services/busServices.js'
-import { getHolidays } from '../utils/holiday.js'
-import axios from 'axios'
-import { get, ref } from 'firebase/database'
-import { db } from '../firebase/config.js'
-
-// Helper para parsear coord string -> { lat, lng }
-function parseCoord(coordStr) {
-  if (!coordStr) return null
-  let [lat, lng] = coordStr.split(',').map(s => Number(s.trim()))
-  return { lat, lng }
-}
-
-// Helper para normalizar nombres
-function normalize(str) {
-  return (str || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim()
-}
-
-// Para buscar cityID by name en Cities
-function getCityIDByName(name, cities) {
-  if (!name) return null
-  const entry = Object.entries(cities).find(
-    ([_, val]) =>
-      val &&
-      val.name &&
-      typeof val.name === "string" &&
-      normalize(val.name) === normalize(name)
-  )
-  return entry ? entry[0] : null
-}
-
-// Distancia en metros entre dos coordenadas
-function haversineDistance(coordA, coordB) {
-  if (!coordA || !coordB) return Infinity
-  const R = 6371e3
-  const φ1 = coordA.lat * Math.PI / 180
-  const φ2 = coordB.lat * Math.PI / 180
-  const Δφ = (coordB.lat - coordA.lat) * Math.PI / 180
-  const Δλ = (coordB.lng - coordA.lng) * Math.PI / 180
-  const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
-    Math.cos(φ1) * Math.cos(φ2) *
-    Math.sin(Δλ / 2) * Math.sin(Δλ / 2)
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
-  return R * c
-}
+import {
+  getLocation,
+  getCity,
+} from '../services/busServices.js'
+import { getHolidays } from '../utils/holiday.js';
+import axios from 'axios';
+import { get, ref } from 'firebase/database';
+import { db } from '../firebase/config.js';
 
 export const obtenerTiempoEstimado = async (req, res) => {
-  const { recorridoID, ciudadObjetivo } = req.query
+  const { recorridoID, ciudadObjetivo } = req.query;
 
-  // --- Debug de entrada ---
-  console.log(">>> [REQ DEBUG] recorridoID:", recorridoID, "ciudadObjetivo:", ciudadObjetivo)
+  console.log('[REQ]', { recorridoID, ciudadObjetivo });
 
-  // 1. Traer Cities y Recorridos de la DB
-  const citiesRef = ref(db, 'Cities')
-  const recorridosRef = ref(db, 'Recorridos')
-  const [citiesSnap, recorridosSnap] = await Promise.all([get(citiesRef), get(recorridosRef)])
+  // 1. Traer ciudades y recorridos de la DB
+  const citiesRef = ref(db, 'Cities');
+  const recorridosRef = ref(db, 'Recorridos');
+  const [citiesSnap, recorridosSnap] = await Promise.all([get(citiesRef), get(recorridosRef)]);
   if (!citiesSnap.exists() || !recorridosSnap.exists()) {
-    return res.status(500).json({ error: true, texto: "Error accediendo a la base de datos." })
+    return res.status(500).json({ error: true, texto: "Error accediendo a la base de datos." });
   }
-  const cities = citiesSnap.val()
-  const recorridos = recorridosSnap.val()
+  const cities = citiesSnap.val();
+  const recorridos = recorridosSnap.val();
 
-  // 2. Traer la ubicación actual del colectivo
-  const locationObj = await getLocation(recorridoID)
-  if (!locationObj || locationObj.error) {
+  function normalize(str) {
+    return (str || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+  }
+
+  const getCityIDByName = (name) => {
+    if (!name) return null;
+    const entry = Object.entries(cities).find(
+      ([_, val]) =>
+        val &&
+        val.name &&
+        typeof val.name === "string" &&
+        normalize(val.name) === normalize(name)
+    );
+    return entry ? entry[0] : null;
+  };
+
+  // Traer la ubicación y stops actuales desde Firebase
+  const location = await getLocation(recorridoID);
+  if (!location || location.error) {
     return res.json({
       error: true,
-      texto: locationObj?.error || "No hay información de ubicación."
-    })
+      texto: location?.error || "No hay información de ubicación."
+    });
   }
 
-  // Debug: mostrar la ubicación recibida
-  console.log(">>> [LOCATION DEBUG] locationObj:", JSON.stringify(locationObj))
+  // 2. Buscar el recorrido y la lista de cityIDs
+  const recorridoObj = recorridos[recorridoID];
+  const citiesArray = recorridoObj ? recorridoObj.cities.filter(Boolean) : [];
+  const cityIDsArray = citiesArray.map(c => c.cityID);
 
-  // 3. Buscar el recorrido y array de ciudades
-  const recorridoObj = recorridos[recorridoID]
-  const citiesArray = recorridoObj ? recorridoObj.cities.filter(Boolean) : []
-  const cityIDsArray = citiesArray.map(c => c.cityID)
+  // Determinar la ciudad más cercana a la ubicación actual del colectivo
+  let currentCityIdx = -1;
+  let currentCityID = null;
+  let minDist = Infinity;
 
-  // Debug: mostrar citiesArray
-  console.log(">>> [CITIES DEBUG] citiesArray:", citiesArray.map((c, i) => ({ i, cityID: c.cityID, name: cities[c.cityID]?.name })))
-
-  // 4. Detectar ciudad actual robustamente
-  const DIST_THRESHOLD = 700 // metros
-
-  const busCoord =
-    locationObj.location && !isNaN(locationObj.location.latitude) && !isNaN(locationObj.location.longitude)
-      ? { lat: Number(locationObj.location.latitude), lng: Number(locationObj.location.longitude) }
-      : (typeof locationObj.lat === "number" && typeof locationObj.lng === "number")
-        ? { lat: Number(locationObj.lat), lng: Number(locationObj.lng) }
-        : null;
-
-  console.log(">>> [BUSCOORD DEBUG] busCoord:", busCoord);
-
-  // Buscar ciudad más cercana del recorrido
-  let closestIdx = -1, closestID = null, minDist = Infinity
+  // Matchear por coordenada: encontrar la ciudad más cercana a location.lat, location.lng
   for (let i = 0; i < citiesArray.length; i++) {
-    const cityID = citiesArray[i].cityID
-    const cityData = cities[cityID]
-    if (!cityData || !cityData.coord) continue
-    const cityCoord = parseCoord(cityData.coord)
-    const dist = haversineDistance(busCoord, cityCoord)
-    console.log(`>>> Comparando con ciudad ${cityData.name} (${cityID}): dist = ${dist} m, busCoord = ${JSON.stringify(busCoord)}, cityCoord = ${JSON.stringify(cityCoord)}`)
+    const city = citiesArray[i];
+    if (!city.latitude || !city.longitude) continue;
+    const dLat = city.latitude - location.lat;
+    const dLng = city.longitude - location.lng;
+    const dist = Math.sqrt(dLat * dLat + dLng * dLng);
     if (dist < minDist) {
-      minDist = dist
-      closestIdx = i
-      closestID = cityID
+      minDist = dist;
+      currentCityIdx = i;
+      currentCityID = city.cityID;
     }
   }
 
-  let currentIdx = closestIdx
-  let currentID = closestID
-  // Si está lejos de cualquier ciudad (> threshold), consideramos la ciudad anterior
-  if (minDist > DIST_THRESHOLD && closestIdx > 0) {
-    currentIdx = closestIdx - 1
-    currentID = citiesArray[currentIdx].cityID
+  // Si tu estructura de location tiene el nombre de la ciudad actual, podés usar:
+  // const currentCityID = getCityIDByName(location.currentCity);
+
+  const targetID = getCityIDByName(ciudadObjetivo);
+  const targetIdx = cityIDsArray.indexOf(targetID);
+
+  console.log('[CURRENT CITY]', { currentCityID, currentCityIdx });
+  console.log('[TARGET ID]', { targetID, targetIdx });
+  console.log('[cityIDsArray]', cityIDsArray);
+  if (Array.isArray(location.stops)) {
+    console.log('[STOPS NAMES]', location.stops.map(s => s.name));
+  } else {
+    console.log('[STOPS] No stops in location');
   }
 
-  // Si la ubicación está antes de la primera ciudad, error
-  if (closestIdx === 0 && minDist > DIST_THRESHOLD) {
-    return res.json({ error: true, texto: "No se pudo determinar la ciudad actual del colectivo." })
-  }
-
-  // Validación extra: si busCoord es inválido, error
-  if (!busCoord || isNaN(busCoord.lat) || isNaN(busCoord.lng)) {
-    return res.json({ error: true, texto: "No se pudo obtener las coordenadas actuales del colectivo." })
-  }
-
-  // 5. Determinar ciudad objetivo
-  const targetID = getCityIDByName(ciudadObjetivo, cities)
-  const targetIdx = cityIDsArray.indexOf(targetID)
-
-  // LOGS para debug
-  console.log(`[BUS] currentIdx=${currentIdx} (${cities[currentID]?.name}), targetIdx=${targetIdx} (${cities[targetID]?.name}), minDist=${minDist}`)
-
-  // 6. Validaciones robustas
+  // Validaciones
   if (targetIdx === -1) {
-    return res.json({ error: true, texto: `🚏 ${ciudadObjetivo} no forma parte del recorrido.` })
+    return res.json({ error: true, texto: `🚏 ${ciudadObjetivo} no forma parte del recorrido.` });
   }
-  if (targetIdx < currentIdx) {
-    return res.json({ error: true, texto: `El colectivo ya pasó por ${ciudadObjetivo}.` })
-  }
-  if (targetIdx === currentIdx) {
-    return res.json({ info: true, texto: `El colectivo está actualmente en ${ciudadObjetivo}.` })
+  if (targetIdx < currentCityIdx) {
+    return res.json({ error: true, texto: `El colectivo ya pasó por ${ciudadObjetivo}.` });
   }
 
-  // 7. Paradas intermedias (solo entre actual y objetivo)
-  const stops = Array.isArray(locationObj.stops) ? locationObj.stops : []
-  const stopsInTramo = stops.filter(stop => {
-    const stopID = getCityIDByName(stop.name, cities)
-    const stopIdx = cityIDsArray.indexOf(stopID)
-    return stopIdx > currentIdx && stopIdx < targetIdx
-  })
+  // --- Lógica de paradas intermedias ---
+  // Solo las paradas entre la ubicación actual y el objetivo
+  const stopsInTramo = (location.stops || []).filter(stop => {
+    const stopID = getCityIDByName(stop.name);
+    const stopIdx = cityIDsArray.indexOf(stopID);
+    console.log(`[TRAMO FILTER] stop="${stop.name}" id="${stopID}" idx=${stopIdx} | currentCityIdx=${currentCityIdx}, targetIdx=${targetIdx}`);
+    return stopIdx > currentCityIdx && stopIdx < targetIdx;
+  });
+
+  console.log('[STOPS IN TRAMO]', stopsInTramo.map(s => s.name));
+
   const intermediates = stopsInTramo.map(stop => ({
     location: {
       latLng: {
-        latitude: parseCoord(stop.coord)?.lat,
-        longitude: parseCoord(stop.coord)?.lng
+        latitude: parseFloat(stop.coord.split(',')[0]),
+        longitude: parseFloat(stop.coord.split(',')[1])
       }
     }
-  }))
-  const cantidadParadas = intermediates.length
-  const minutosExtraPorParadas = cantidadParadas * 5
+  }));
 
-  // 8. Datos de destino
-  const destino = cities[targetID]
-  if (!destino || !destino.coord) return res.status(404).send("No se encontró la ciudad de destino.")
+  const cantidadParadas = intermediates.length;
+  const minutosExtraPorParadas = cantidadParadas * 5;
 
-  // 9. Preparar request para Google Routes API
-  const date = new Date()
-  date.setMinutes(date.getMinutes() + 5)
-  const destCoord = parseCoord(destino.coord)
+  const destino = await getCity(ciudadObjetivo);
+  if (!destino) return res.status(404).send("No se encontró la ciudad de destino.");
+
+  const date = new Date();
+  date.setMinutes(date.getMinutes() + 5);
+
   const requestBody = {
-    origin: { location: { latLng: { latitude: busCoord.lat, longitude: busCoord.lng } } },
-    destination: { location: { latLng: { latitude: destCoord.lat, longitude: destCoord.lng } } },
+    origin: { location: { latLng: { latitude: location.lat, longitude: location.lng } } },
+    destination: { location: { latLng: { latitude: destino.latitude, longitude: destino.longitude } } },
     intermediates,
     travelMode: "DRIVE",
     routingPreference: "TRAFFIC_AWARE",
-    departureTime: date.toISOString()
-  }
+    departureTime: date.toISOString(),
+  };
 
-  // 10. Lógica de ETA y clima
   try {
     const routeRes = await axios.post(
       "https://routes.googleapis.com/directions/v2:computeRoutes",
@@ -191,71 +143,62 @@ export const obtenerTiempoEstimado = async (req, res) => {
           "X-Goog-FieldMask": "routes.duration,routes.distanceMeters"
         }
       }
-    )
+    );
 
-    const clima = await axios.get(`https://api.openweathermap.org/data/2.5/weather?lat=${busCoord.lat}&lon=${busCoord.lng}&appid=d3918607c24dc94a2dd83e3a36f7bd3c&units=metric&lang=es`)
-    const weather = clima.data.weather[0].main
-    const visibility = clima.data.visibility
+    const clima = await axios.get(`https://api.openweathermap.org/data/2.5/weather?lat=${location.lat}&lon=${location.lng}&appid=d3918607c24dc94a2dd83e3a36f7bd3c&units=metric&lang=es`);
+    const weather = clima.data.weather[0].main;
+    const visibility = clima.data.visibility;
 
-    let factorClima = 1
-    if (weather === 'Rain') factorClima = visibility < 500 ? 1.2 : 1.1
-    else if (weather === 'Fog') factorClima = 1.3
-    else if (weather === 'Snow') factorClima = 1.5
+    let factorClima = 1;
+    if (weather === 'Rain') factorClima = visibility < 500 ? 1.2 : 1.1;
+    else if (weather === 'Fog') factorClima = 1.3;
+    else if (weather === 'Snow') factorClima = 1.5;
 
-    const now = new Date()
-    const holidays = await getHolidays(now.getFullYear())
-    const isWeekend = [0, 6].includes(now.getDay())
-    const isHoliday = holidays.includes(now.toISOString().split('T')[0])
+    const now = new Date();
+    const holidays = await getHolidays(now.getFullYear());
+    const isWeekend = [0, 6].includes(now.getDay());
+    const isHoliday = holidays.includes(now.toISOString().split('T')[0]);
 
-    let dayAdjustmentFactor = 1
+    let dayAdjustmentFactor = 1;
     if (isHoliday && isWeekend) {
-      dayAdjustmentFactor += 0.1
+      dayAdjustmentFactor += 0.1;
     } else if (isHoliday) {
-      dayAdjustmentFactor += 0.15
+      dayAdjustmentFactor += 0.15;
     } else if (isWeekend) {
-      dayAdjustmentFactor += 0.1
+      dayAdjustmentFactor += 0.1;
     }
 
-    const busDelayFactor = 1.15
-    const duracionSeg = parseInt(routeRes.data.routes[0].duration.replace('s', ''))
-    const totalMin = Math.floor((duracionSeg / 60) * factorClima * dayAdjustmentFactor * busDelayFactor) + minutosExtraPorParadas
-    const horas = Math.floor(totalMin / 60)
-    const min = totalMin % 60
+    const busDelayFactor = 1.15;
+    const duracionSeg = parseInt(routeRes.data.routes[0].duration.replace('s', ''));
+    const totalMin = Math.floor((duracionSeg / 60) * factorClima * dayAdjustmentFactor * busDelayFactor) + minutosExtraPorParadas;
+    const horas = Math.floor(totalMin / 60);
+    const min = totalMin % 60;
 
-    const estimatedArrival = new Date()
-    estimatedArrival.setMinutes(estimatedArrival.getMinutes() + totalMin)
+    const estimatedArrival = new Date();
+    estimatedArrival.setMinutes(estimatedArrival.getMinutes() + totalMin);
 
     const horaEstimada = new Intl.DateTimeFormat('es-AR', {
       hour: '2-digit', minute: '2-digit'
-    }).format(estimatedArrival)
+    }).format(estimatedArrival);
 
     const formattedDate = new Intl.DateTimeFormat('es-AR', {
       dateStyle: 'full', timeStyle: 'short'
-    }).format(new Date(locationObj.date))
+    }).format(new Date(location.date));
 
-    res.json({
-      tiempo: `${horas}h ${min}m`,
-      hora: `${horaEstimada} hs`,
-      clima: `${weather}, visibilidad ${visibility}m.`,
-      dia: `${isWeekend ? 'Fin de semana' : 'Laboral'}${isHoliday ? ' y feriado' : ''}.`,
-      ajustes: `clima +${Math.round((factorClima - 1) * 100)}%, día +${Math.round((dayAdjustmentFactor - 1) * 100)}%.`,
-      paradas: `${cantidadParadas} (+${minutosExtraPorParadas} min)`,
-      ubicacion: formattedDate,
-      mapa: {
-        currentLocation: { latitude: busCoord.lat, longitude: busCoord.lng },
-        destinationCoord: { latitude: destCoord.lat, longitude: destCoord.lng },
-        waypoints: intermediates.map(i => ({
-          latitude: i.location.latLng.latitude,
-          longitude: i.location.latLng.longitude
-        }))
-      }
-    })
-  } catch (error) {
-    console.error(error)
-    res.status(500).json({
-      error: true,
-      msg: "Error al calcular la ruta",
-      detalle: error.message
-    })
-  }
-}
+   res.json({
+    tiempo: `${horas}h ${min}m`,
+    hora: `${horaEstimada} hs`,
+    clima: `${weather}, visibilidad ${visibility}m.`,
+    dia: `${isWeekend ? 'Fin de semana' : 'Laboral'}${isHoliday ? ' y feriado' : ''}.`,
+    ajustes: `clima +${Math.round((factorClima - 1) * 100)}%, día +${Math.round((dayAdjustmentFactor - 1) * 100)}%.`,
+    paradas: `${cantidadParadas} (+${minutosExtraPorParadas} min)`,
+    ubicacion: formattedDate,
+    });
+} catch (error) {
+  console.error(error);
+  res.status(500).json({
+    error: true,
+    msg: "Error al calcular la ruta",
+    detalle: error.message
+  });
+}};
