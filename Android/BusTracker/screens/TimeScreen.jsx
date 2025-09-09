@@ -179,7 +179,6 @@ const TimeScreen = () => {
 
       setResultado(data);
       setModalVisible(true);
-      console.log('Resultado mapa:', resultado.mapa);
     } catch (err) {
       console.error("Error en fetchLocation:", err);
       setResultado({ error: true, msg: `Hubo un error al consultar la ubicación.\n${err.message}` });

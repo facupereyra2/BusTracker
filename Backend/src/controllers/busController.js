@@ -74,61 +74,39 @@ export const obtenerTiempoEstimado = async (req, res) => {
 
   // --- Paradas intermedias restantes en este viaje ---
   const stops = Array.isArray(locationObj.stops) ? locationObj.stops : [];
-  // stops = [{name, coord}, ...]
-
-  // --- Determinar si ya pasó por ciudadObjetivo ---
-  if (objetivoIdx < currentCityIdx) {
-    return res.json({ error: true, texto: `El colectivo ya pasó por ${ciudadObjetivo}.` });
-  }
-
-  // --- stopsNames para comparar ---
   const stopsNamesNorm = stops.map(s => normalize(s.name));
+  const objetivoNorm = normalize(ciudadObjetivo);
+
+  // --- Lógica principal ---
+  if (objetivoIdx < currentCityIdx) {
+    // Ya pasó
+    return res.json({ error: true, texto: `El colectivo ya pasó por ${ciudadObjetivo}.` });
+  } else if (objetivoIdx === currentCityIdx) {
+    // Es la ciudad actual
+    return res.json({ info: true, texto: `El colectivo está actualmente en ${ciudadObjetivo}.` });
+  }
+  // Si está adelante en el recorrido (sea parada o no, se calcula tiempo)
 
   // --- Paradas a incluir en el tramo ---
-  // Si la ciudad objetivo está en stops, solo incluís las paradas entre la ciudad actual y objetivo
-  // Si NO está en stops, usás todas las paradas del viaje actual que estén entre la ciudad actual y objetivo
-
+  // Solo incluir las stops que estén entre la ciudad actual y la ciudad objetivo
   let intermediates = [];
-  let numInterStops = 0;
-  let minutosExtraPorParadas = 0;
-  if (stopsNamesNorm.includes(normalize(ciudadObjetivo))) {
-    // Va a detenerse (stop) en ciudadObjetivo, solo incluye stops que están entre la ciudad actual y objetivo
-    intermediates = stops
-      .filter(stop => {
-        const stopID = getCityIDByName(stop.name, cities);
-        const stopIdx = cityIDsArray.indexOf(stopID);
-        return stopIdx > currentCityIdx && stopIdx < objetivoIdx;
-      })
-      .map(stop => ({
-        location: {
-          latLng: {
-            latitude: parseCoord(stop.coord)?.lat,
-            longitude: parseCoord(stop.coord)?.lng
-          }
+  intermediates = stops
+    .filter(stop => {
+      const stopID = getCityIDByName(stop.name, cities);
+      const stopIdx = cityIDsArray.indexOf(stopID);
+      return stopIdx > currentCityIdx && stopIdx < objetivoIdx;
+    })
+    .map(stop => ({
+      location: {
+        latLng: {
+          latitude: parseCoord(stop.coord)?.lat,
+          longitude: parseCoord(stop.coord)?.lng
         }
-      }));
-    numInterStops = intermediates.length;
-    minutosExtraPorParadas = numInterStops * 5;
-  } else {
-    // Puede que ciudadObjetivo no sea parada del viaje, pero sí está en el recorrido
-    // Armo paradas intermedias como todas las stops del viaje actual que estén entre la ciudad actual y objetivo (del recorrido completo)
-    intermediates = stops
-      .filter(stop => {
-        const stopID = getCityIDByName(stop.name, cities);
-        const stopIdx = cityIDsArray.indexOf(stopID);
-        return stopIdx > currentCityIdx && stopIdx < objetivoIdx;
-      })
-      .map(stop => ({
-        location: {
-          latLng: {
-            latitude: parseCoord(stop.coord)?.lat,
-            longitude: parseCoord(stop.coord)?.lng
-          }
-        }
-      }));
-    numInterStops = intermediates.length;
-    minutosExtraPorParadas = numInterStops * 5;
-  }
+      }
+    }));
+
+  const numInterStops = intermediates.length;
+  const minutosExtraPorParadas = numInterStops * 5;
 
   // --- Coordenadas destino ---
   const destinoObj = cities[objetivoID];
