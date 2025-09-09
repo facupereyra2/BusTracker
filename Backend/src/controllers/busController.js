@@ -70,6 +70,15 @@ export const obtenerTiempoEstimado = async (req, res) => {
   const destinationCityID = getCityIDByName(locationObj.destination, cities);
   const destinationIdx = cityIDsArray.indexOf(destinationCityID);
 
+  // --- Paradas intermedias restantes en este viaje ---
+  const stops = Array.isArray(locationObj.stops) ? locationObj.stops : [];
+  // El colectivo está en la última parada compartida si stops está vacío
+  let nextStopIdx = destinationIdx;
+  if (stops.length > 0) {
+    const nextStopID = getCityIDByName(stops[0].name, cities);
+    nextStopIdx = cityIDsArray.indexOf(nextStopID);
+  }
+
   // --- Ubicación actual del colectivo ---
   const busCoord = locationObj.location
     ? { lat: Number(locationObj.location.latitude), lng: Number(locationObj.location.longitude) }
@@ -78,268 +87,160 @@ export const obtenerTiempoEstimado = async (req, res) => {
     return res.json({ error: true, texto: "No se pudo obtener la ubicación actual del colectivo." });
   }
 
-  // --- Paradas intermedias restantes en este viaje ---
-  const stops = Array.isArray(locationObj.stops) ? locationObj.stops : [];
-
-  // --- Coordenadas destino compartido ---
+  // --- Coordenada del destino compartido ---
   const destinoObjCompartido = cities[destinationCityID];
   const destinoCoordCompartido = destinoObjCompartido ? parseCoord(destinoObjCompartido.coord) : null;
 
-  // --- Regla 1: Si la ciudad objetivo está antes del origin ---
+  // --- Lógica principal ---
   if (objetivoIdx < originIdx) {
+    // Ya pasó: ciudad objetivo antes del origin
     return res.json({ error: true, texto: `El colectivo ya pasó por ${ciudadObjetivo}.` });
   }
-  // --- Regla 2: Si la ciudad objetivo es el origin ---
   if (objetivoIdx === originIdx) {
+    // Está en la ciudad origin
     return res.json({ info: true, texto: `El colectivo está actualmente en ${ciudadObjetivo}.` });
   }
-  // --- Regla 3: Si la ciudad objetivo está entre origin y destination (inclusive) ---
-  if (objetivoIdx >= originIdx && objetivoIdx <= destinationIdx) {
-    // Además, si ya llegó a destination, no puede estimar más adelante
-    if (
-      stops.length === 0 &&
-      coordsAreEqual(busCoord, destinoCoordCompartido)
-    ) {
-      // Ya llegó a destino compartido
-      if (objetivoIdx === destinationIdx) {
-        return res.json({ info: true, texto: `El colectivo está actualmente en ${ciudadObjetivo}.` });
-      } else {
-        return res.json({ error: true, texto: `El colectivo ya pasó por ${ciudadObjetivo}.` });
-      }
-    }
-    // Todavía no llegó a destino, puede estimar tiempo
-    // Paradas intermedias entre origin y objetivo
-    let intermediates = stops
-      .filter(stop => {
-        const stopID = getCityIDByName(stop.name, cities);
-        const stopIdx = cityIDsArray.indexOf(stopID);
-        return stopIdx > originIdx && stopIdx < objetivoIdx;
-      })
-      .map(stop => ({
-        location: {
-          latLng: {
-            latitude: parseCoord(stop.coord)?.lat,
-            longitude: parseCoord(stop.coord)?.lng
-          }
-        }
-      }));
-
-    const numInterStops = intermediates.length;
-    const minutosExtraPorParadas = numInterStops * 5;
-
-    // --- Coordenadas destino ---
-    const destinoObj = cities[objetivoID];
-    if (!destinoObj || !destinoObj.coord) {
-      return res.status(404).json({ error: true, texto: "No se encontró la ciudad objetivo en la base." });
-    }
-    const destinoCoord = parseCoord(destinoObj.coord);
-
-    // --- Google Maps API ---
-    const date = new Date();
-    date.setMinutes(date.getMinutes() + 5);
-
-    const requestBody = {
-      origin: { location: { latLng: { latitude: busCoord.lat, longitude: busCoord.lng } } },
-      destination: { location: { latLng: { latitude: destinoCoord.lat, longitude: destinoCoord.lng } } },
-      intermediates,
-      travelMode: "DRIVE",
-      routingPreference: "TRAFFIC_AWARE",
-      departureTime: date.toISOString(),
-    };
-
-    try {
-      const routeRes = await axios.post(
-        "https://routes.googleapis.com/directions/v2:computeRoutes",
-        requestBody,
-        {
-          headers: {
-            "Content-Type": "application/json",
-            "X-Goog-Api-Key": "AIzaSyCimtoa9B9Bj_Op1IiIST2vseAsVbt5vEQ",
-            "X-Goog-FieldMask": "routes.duration,routes.distanceMeters"
-          }
-        }
-      );
-      const clima = await axios.get(`https://api.openweathermap.org/data/2.5/weather?lat=${busCoord.lat}&lon=${busCoord.lng}&appid=d3918607c24dc94a2dd83e3a36f7bd3c&units=metric&lang=es`);
-      const weather = clima.data.weather[0].main;
-      const visibility = clima.data.visibility;
-
-      let factorClima = 1;
-      if (weather === 'Rain') factorClima = visibility < 500 ? 1.2 : 1.1;
-      else if (weather === 'Fog') factorClima = 1.3;
-      else if (weather === 'Snow') factorClima = 1.5;
-
-      const now = new Date();
-      const holidays = await getHolidays(now.getFullYear());
-      const isWeekend = [0, 6].includes(now.getDay());
-      const isHoliday = holidays.includes(now.toISOString().split('T')[0]);
-
-      let dayAdjustmentFactor = 1;
-      if (isHoliday && isWeekend) {
-        dayAdjustmentFactor += 0.1;
-      } else if (isHoliday) {
-        dayAdjustmentFactor += 0.15;
-      } else if (isWeekend) {
-        dayAdjustmentFactor += 0.1;
-      }
-
-      const busDelayFactor = 1.15;
-      const duracionSeg = parseInt(routeRes.data.routes[0].duration.replace('s', ''));
-      const totalMin = Math.floor((duracionSeg / 60) * factorClima * dayAdjustmentFactor * busDelayFactor) + minutosExtraPorParadas;
-      const horas = Math.floor(totalMin / 60);
-      const min = totalMin % 60;
-
-      const estimatedArrival = new Date();
-      estimatedArrival.setMinutes(estimatedArrival.getMinutes() + totalMin);
-
-      const horaEstimada = new Intl.DateTimeFormat('es-AR', {
-        hour: '2-digit', minute: '2-digit'
-      }).format(estimatedArrival);
-
-      const formattedDate = new Intl.DateTimeFormat('es-AR', {
-        dateStyle: 'full', timeStyle: 'short'
-      }).format(new Date(locationObj.date));
-
-      return res.json({
-        tiempo: `${horas}h ${min}m`,
-        hora: `${horaEstimada} hs`,
-        clima: `${weather}, visibilidad ${visibility}m.`,
-        dia: `${isWeekend ? 'Fin de semana' : 'Laboral'}${isHoliday ? ' y feriado' : ''}.`,
-        ajustes: `clima +${Math.round((factorClima - 1) * 100)}%, día +${Math.round((dayAdjustmentFactor - 1) * 100)}%.`,
-        paradas: `${numInterStops} (+${minutosExtraPorParadas} min)`,
-        ubicacion: formattedDate,
-      });
-    } catch (error) {
-      console.error(error);
-      return res.status(500).json({
-        error: true,
-        msg: "Error al calcular la ruta",
-        detalle: error.message
-      });
-    }
-  }
-
-  // --- Regla 4: Si la ciudad objetivo está después de destination ---
-  // Si llegó a destino, ya pasó. Si no, puede estimar tiempo como arriba.
-  if (objetivoIdx > destinationIdx) {
-    if (
-      stops.length === 0 &&
-      coordsAreEqual(busCoord, destinoCoordCompartido)
-    ) {
-      // Ya llegó a destino compartido
-      return res.json({ error: true, texto: `El colectivo ya pasó por ${ciudadObjetivo}.` });
+  // Si stops vacío y bus está en destino compartido, ya terminó el tramo compartido
+  if (
+    stops.length === 0 &&
+    coordsAreEqual(busCoord, destinoCoordCompartido)
+  ) {
+    // Ya llegó a destino, cualquier ciudad entre origin y destination ya pasó excepto destination
+    if (objetivoIdx === destinationIdx) {
+      return res.json({ info: true, texto: `El colectivo está actualmente en ${ciudadObjetivo}.` });
     } else {
-      // Todavía no llegó, puede estimar tiempo
-      // Paradas intermedias entre origin y objetivo
-      let intermediates = stops
-        .filter(stop => {
-          const stopID = getCityIDByName(stop.name, cities);
-          const stopIdx = cityIDsArray.indexOf(stopID);
-          return stopIdx > originIdx && stopIdx < objetivoIdx;
-        })
-        .map(stop => ({
-          location: {
-            latLng: {
-              latitude: parseCoord(stop.coord)?.lat,
-              longitude: parseCoord(stop.coord)?.lng
-            }
-          }
-        }));
-
-      const numInterStops = intermediates.length;
-      const minutosExtraPorParadas = numInterStops * 5;
-
-      // --- Coordenadas destino ---
-      const destinoObj = cities[objetivoID];
-      if (!destinoObj || !destinoObj.coord) {
-        return res.status(404).json({ error: true, texto: "No se encontró la ciudad objetivo en la base." });
-      }
-      const destinoCoord = parseCoord(destinoObj.coord);
-
-      // --- Google Maps API ---
-      const date = new Date();
-      date.setMinutes(date.getMinutes() + 5);
-
-      const requestBody = {
-        origin: { location: { latLng: { latitude: busCoord.lat, longitude: busCoord.lng } } },
-        destination: { location: { latLng: { latitude: destinoCoord.lat, longitude: destinoCoord.lng } } },
-        intermediates,
-        travelMode: "DRIVE",
-        routingPreference: "TRAFFIC_AWARE",
-        departureTime: date.toISOString(),
-      };
-
-      try {
-        const routeRes = await axios.post(
-          "https://routes.googleapis.com/directions/v2:computeRoutes",
-          requestBody,
-          {
-            headers: {
-              "Content-Type": "application/json",
-              "X-Goog-Api-Key": "AIzaSyCimtoa9B9Bj_Op1IiIST2vseAsVbt5vEQ",
-              "X-Goog-FieldMask": "routes.duration,routes.distanceMeters"
-            }
-          }
-        );
-        const clima = await axios.get(`https://api.openweathermap.org/data/2.5/weather?lat=${busCoord.lat}&lon=${busCoord.lng}&appid=d3918607c24dc94a2dd83e3a36f7bd3c&units=metric&lang=es`);
-        const weather = clima.data.weather[0].main;
-        const visibility = clima.data.visibility;
-
-        let factorClima = 1;
-        if (weather === 'Rain') factorClima = visibility < 500 ? 1.2 : 1.1;
-        else if (weather === 'Fog') factorClima = 1.3;
-        else if (weather === 'Snow') factorClima = 1.5;
-
-        const now = new Date();
-        const holidays = await getHolidays(now.getFullYear());
-        const isWeekend = [0, 6].includes(now.getDay());
-        const isHoliday = holidays.includes(now.toISOString().split('T')[0]);
-
-        let dayAdjustmentFactor = 1;
-        if (isHoliday && isWeekend) {
-          dayAdjustmentFactor += 0.1;
-        } else if (isHoliday) {
-          dayAdjustmentFactor += 0.15;
-        } else if (isWeekend) {
-          dayAdjustmentFactor += 0.1;
-        }
-
-        const busDelayFactor = 1.15;
-        const duracionSeg = parseInt(routeRes.data.routes[0].duration.replace('s', ''));
-        const totalMin = Math.floor((duracionSeg / 60) * factorClima * dayAdjustmentFactor * busDelayFactor) + minutosExtraPorParadas;
-        const horas = Math.floor(totalMin / 60);
-        const min = totalMin % 60;
-
-        const estimatedArrival = new Date();
-        estimatedArrival.setMinutes(estimatedArrival.getMinutes() + totalMin);
-
-        const horaEstimada = new Intl.DateTimeFormat('es-AR', {
-          hour: '2-digit', minute: '2-digit'
-        }).format(estimatedArrival);
-
-        const formattedDate = new Intl.DateTimeFormat('es-AR', {
-          dateStyle: 'full', timeStyle: 'short'
-        }).format(new Date(locationObj.date));
-
-        return res.json({
-          tiempo: `${horas}h ${min}m`,
-          hora: `${horaEstimada} hs`,
-          clima: `${weather}, visibilidad ${visibility}m.`,
-          dia: `${isWeekend ? 'Fin de semana' : 'Laboral'}${isHoliday ? ' y feriado' : ''}.`,
-          ajustes: `clima +${Math.round((factorClima - 1) * 100)}%, día +${Math.round((dayAdjustmentFactor - 1) * 100)}%.`,
-          paradas: `${numInterStops} (+${minutosExtraPorParadas} min)`,
-          ubicacion: formattedDate,
-        });
-      } catch (error) {
-        console.error(error);
-        return res.status(500).json({
-          error: true,
-          msg: "Error al calcular la ruta",
-          detalle: error.message
-        });
-      }
+      return res.json({ error: true, texto: `El colectivo ya pasó por ${ciudadObjetivo}.` });
     }
   }
+  // Si la ciudad objetivo está entre origin y nextStopIdx (no inclusive), y no está en stops, ya pasó
+  if (
+    stops.length > 0 &&
+    objetivoIdx < nextStopIdx
+  ) {
+    return res.json({ error: true, texto: `El colectivo ya pasó por ${ciudadObjetivo}.` });
+  }
+  // Si la ciudad objetivo está igual a la próxima parada
+  if (
+    stops.length > 0 &&
+    objetivoIdx === nextStopIdx
+  ) {
+    // Si la ubicación actual coincide con la parada, está en esa ciudad
+    const nextStopObj = cities[cityIDsArray[nextStopIdx]];
+    const nextStopCoord = nextStopObj ? parseCoord(nextStopObj.coord) : null;
+    if (coordsAreEqual(busCoord, nextStopCoord)) {
+      return res.json({ info: true, texto: `El colectivo está actualmente en ${ciudadObjetivo}.` });
+    }
+    // Si no, puede estimar tiempo
+  }
+  // Si la ciudad objetivo está después del próximo stop o después de destination, puede estimar tiempo
+  // Estima tiempo para cualquier ciudad entre origin y destination (inclusive) o después de destination si el tramo compartido sigue activo
 
-  // --- Si no matchea ninguna regla anterior ---
-  return res.json({ error: true, texto: "No se pudo determinar el estado para esta consulta." });
+  // Paradas intermedias entre origin y objetivo
+  let intermediates = stops
+    .filter(stop => {
+      const stopID = getCityIDByName(stop.name, cities);
+      const stopIdx = cityIDsArray.indexOf(stopID);
+      return stopIdx > originIdx && stopIdx < objetivoIdx;
+    })
+    .map(stop => ({
+      location: {
+        latLng: {
+          latitude: parseCoord(stop.coord)?.lat,
+          longitude: parseCoord(stop.coord)?.lng
+        }
+      }
+    }));
+
+  const numInterStops = intermediates.length;
+  const minutosExtraPorParadas = numInterStops * 5;
+
+  // --- Coordenadas destino ---
+  const destinoObj = cities[objetivoID];
+  if (!destinoObj || !destinoObj.coord) {
+    return res.status(404).json({ error: true, texto: "No se encontró la ciudad objetivo en la base." });
+  }
+  const destinoCoord = parseCoord(destinoObj.coord);
+
+  // --- Google Maps API ---
+  const date = new Date();
+  date.setMinutes(date.getMinutes() + 5);
+
+  const requestBody = {
+    origin: { location: { latLng: { latitude: busCoord.lat, longitude: busCoord.lng } } },
+    destination: { location: { latLng: { latitude: destinoCoord.lat, longitude: destinoCoord.lng } } },
+    intermediates,
+    travelMode: "DRIVE",
+    routingPreference: "TRAFFIC_AWARE",
+    departureTime: date.toISOString(),
+  };
+
+  try {
+    const routeRes = await axios.post(
+      "https://routes.googleapis.com/directions/v2:computeRoutes",
+      requestBody,
+      {
+        headers: {
+          "Content-Type": "application/json",
+          "X-Goog-Api-Key": "AIzaSyCimtoa9B9Bj_Op1IiIST2vseAsVbt5vEQ",
+          "X-Goog-FieldMask": "routes.duration,routes.distanceMeters"
+        }
+      }
+    );
+    const clima = await axios.get(`https://api.openweathermap.org/data/2.5/weather?lat=${busCoord.lat}&lon=${busCoord.lng}&appid=d3918607c24dc94a2dd83e3a36f7bd3c&units=metric&lang=es`);
+    const weather = clima.data.weather[0].main;
+    const visibility = clima.data.visibility;
+
+    let factorClima = 1;
+    if (weather === 'Rain') factorClima = visibility < 500 ? 1.2 : 1.1;
+    else if (weather === 'Fog') factorClima = 1.3;
+    else if (weather === 'Snow') factorClima = 1.5;
+
+    const now = new Date();
+    const holidays = await getHolidays(now.getFullYear());
+    const isWeekend = [0, 6].includes(now.getDay());
+    const isHoliday = holidays.includes(now.toISOString().split('T')[0]);
+
+    let dayAdjustmentFactor = 1;
+    if (isHoliday && isWeekend) {
+      dayAdjustmentFactor += 0.1;
+    } else if (isHoliday) {
+      dayAdjustmentFactor += 0.15;
+    } else if (isWeekend) {
+      dayAdjustmentFactor += 0.1;
+    }
+
+    const busDelayFactor = 1.15;
+    const duracionSeg = parseInt(routeRes.data.routes[0].duration.replace('s', ''));
+    const totalMin = Math.floor((duracionSeg / 60) * factorClima * dayAdjustmentFactor * busDelayFactor) + minutosExtraPorParadas;
+    const horas = Math.floor(totalMin / 60);
+    const min = totalMin % 60;
+
+    const estimatedArrival = new Date();
+    estimatedArrival.setMinutes(estimatedArrival.getMinutes() + totalMin);
+
+    const horaEstimada = new Intl.DateTimeFormat('es-AR', {
+      hour: '2-digit', minute: '2-digit'
+    }).format(estimatedArrival);
+
+    const formattedDate = new Intl.DateTimeFormat('es-AR', {
+      dateStyle: 'full', timeStyle: 'short'
+    }).format(new Date(locationObj.date));
+
+    return res.json({
+      tiempo: `${horas}h ${min}m`,
+      hora: `${horaEstimada} hs`,
+      clima: `${weather}, visibilidad ${visibility}m.`,
+      dia: `${isWeekend ? 'Fin de semana' : 'Laboral'}${isHoliday ? ' y feriado' : ''}.`,
+      ajustes: `clima +${Math.round((factorClima - 1) * 100)}%, día +${Math.round((dayAdjustmentFactor - 1) * 100)}%.`,
+      paradas: `${numInterStops} (+${minutosExtraPorParadas} min)`,
+      ubicacion: formattedDate,
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({
+      error: true,
+      msg: "Error al calcular la ruta",
+      detalle: error.message
+    });
+  }
 };
