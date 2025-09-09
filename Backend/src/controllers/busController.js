@@ -57,11 +57,37 @@ export const obtenerTiempoEstimado = async (req, res) => {
     return res.json({ error: true, texto: `La ciudad ${ciudadObjetivo} no está en el recorrido.` });
   }
 
-  // --- Ciudad actual: origen del viaje actual ---
+  // --- Ciudad actual: origen (start) del viaje actual ---
   const originCityID = getCityIDByName(locationObj.origin, cities);
   const currentCityIdx = cityIDsArray.indexOf(originCityID);
   if (currentCityIdx === -1) {
     return res.json({ error: true, texto: "No se pudo determinar la ciudad de origen del colectivo." });
+  }
+
+  // --- Paradas intermedias restantes en este viaje ---
+  const stops = Array.isArray(locationObj.stops) ? locationObj.stops : [];
+  const stopsNamesNorm = stops.map(s => normalize(s.name));
+  const objetivoNorm = normalize(ciudadObjetivo);
+
+  // --- Determinar próximo stop (parada siguiente) ---
+  let nextStopIdx = currentCityIdx;
+  if (stops.length > 0) {
+    const nextStopID = getCityIDByName(stops[0].name, cities);
+    nextStopIdx = cityIDsArray.indexOf(nextStopID);
+  }
+
+  // --- Lógica robusta para "ya pasó" ---
+  // Si la ciudad objetivo no está en stops y su índice es menor al índice del próximo stop, ya pasó.
+  if (
+    !stopsNamesNorm.includes(objetivoNorm)
+    && objetivoIdx < nextStopIdx
+  ) {
+    return res.json({ error: true, texto: `El colectivo ya pasó por ${ciudadObjetivo}.` });
+  }
+
+  // --- Ciudad actual ---
+  if (objetivoIdx === currentCityIdx) {
+    return res.json({ info: true, texto: `El colectivo está actualmente en ${ciudadObjetivo}.` });
   }
 
   // --- Ubicación actual del colectivo ---
@@ -72,23 +98,7 @@ export const obtenerTiempoEstimado = async (req, res) => {
     return res.json({ error: true, texto: "No se pudo obtener la ubicación actual del colectivo." });
   }
 
-  // --- Paradas intermedias restantes en este viaje ---
-  const stops = Array.isArray(locationObj.stops) ? locationObj.stops : [];
-  const stopsNamesNorm = stops.map(s => normalize(s.name));
-  const objetivoNorm = normalize(ciudadObjetivo);
-
-  // --- Lógica principal ---
-  if (objetivoIdx < currentCityIdx) {
-    // Ya pasó
-    return res.json({ error: true, texto: `El colectivo ya pasó por ${ciudadObjetivo}.` });
-  } else if (objetivoIdx === currentCityIdx) {
-    // Es la ciudad actual
-    return res.json({ info: true, texto: `El colectivo está actualmente en ${ciudadObjetivo}.` });
-  }
-  // Si está adelante en el recorrido (sea parada o no, se calcula tiempo)
-
-  // --- Paradas a incluir en el tramo ---
-  // Solo incluir las stops que estén entre la ciudad actual y la ciudad objetivo
+  // --- Paradas intermedias para Google Maps ---
   let intermediates = [];
   intermediates = stops
     .filter(stop => {
