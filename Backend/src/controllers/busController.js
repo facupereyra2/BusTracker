@@ -57,10 +57,12 @@ export const obtenerTiempoEstimado = async (req, res) => {
   // --- IDs e índices relevantes ---
   const objetivoID = getCityIDByName(ciudadObjetivo, cities);
   if (!objetivoID) {
+    console.log("Ciudad objetivo no existe:", ciudadObjetivo);
     return res.json({ error: true, texto: `La ciudad ${ciudadObjetivo} no existe en el sistema.` });
   }
   const objetivoIdx = cityIDsArray.indexOf(objetivoID);
   if (objetivoIdx === -1) {
+    console.log("Ciudad objetivo no está en el recorrido:", ciudadObjetivo, cityIDsArray);
     return res.json({ error: true, texto: `La ciudad ${ciudadObjetivo} no está en el recorrido.` });
   }
 
@@ -70,72 +72,77 @@ export const obtenerTiempoEstimado = async (req, res) => {
   const destinationCityID = getCityIDByName(locationObj.destination, cities);
   const destinationIdx = cityIDsArray.indexOf(destinationCityID);
 
+  console.log("Recorrido:", recorridoID, recorridoObj.name);
+  console.log("CitiesArray:", citiesArray.map(c=>c.cityID));
+  console.log("Origin:", locationObj.origin, "originIdx:", originIdx);
+  console.log("Destination:", locationObj.destination, "destinationIdx:", destinationIdx);
+  console.log("Ciudad objetivo:", ciudadObjetivo, "objetivoID:", objetivoID, "objetivoIdx:", objetivoIdx);
+
   // --- Paradas intermedias restantes en este viaje ---
   const stops = Array.isArray(locationObj.stops) ? locationObj.stops : [];
-  // El colectivo está en la última parada compartida si stops está vacío
-  let nextStopIdx = destinationIdx;
-  if (stops.length > 0) {
-    const nextStopID = getCityIDByName(stops[0].name, cities);
-    nextStopIdx = cityIDsArray.indexOf(nextStopID);
-  }
+  console.log("Stops:", stops.map(s => s.name));
 
   // --- Ubicación actual del colectivo ---
   const busCoord = locationObj.location
     ? { lat: Number(locationObj.location.latitude), lng: Number(locationObj.location.longitude) }
     : null;
   if (!busCoord || isNaN(busCoord.lat) || isNaN(busCoord.lng)) {
+    console.log("Ubicación actual inválida:", locationObj.location);
     return res.json({ error: true, texto: "No se pudo obtener la ubicación actual del colectivo." });
   }
+  console.log("Ubicación actual:", busCoord);
 
-  // --- Coordenada del destino compartido ---
-  const destinoObjCompartido = cities[destinationCityID];
-  const destinoCoordCompartido = destinoObjCompartido ? parseCoord(destinoObjCompartido.coord) : null;
+  // --- Determinar índice del próximo stop (o destination si no hay stops) ---
+  let nextStopIdx = destinationIdx;
+  if (stops.length > 0) {
+    const nextStopID = getCityIDByName(stops[0].name, cities);
+    nextStopIdx = cityIDsArray.indexOf(nextStopID);
+  }
+  console.log("NextStopIdx:", nextStopIdx, "stop:", stops[0]?.name);
 
-  // --- Lógica principal ---
+  // --- Lógica robusta: ¿ya pasó por la ciudad objetivo? ---
+  const stopsNamesNorm = stops.map(s => normalize(s.name));
+  const objetivoNorm = normalize(ciudadObjetivo);
+
+  console.log(`Debug lógica de "ya pasó": objetivoIdx=${objetivoIdx}, originIdx=${originIdx}, nextStopIdx=${nextStopIdx}, estáEnStops=${stopsNamesNorm.includes(objetivoNorm)}`);
+
+  if (
+    objetivoIdx > originIdx &&
+    objetivoIdx < nextStopIdx &&
+    !stopsNamesNorm.includes(objetivoNorm)
+  ) {
+    console.log(`Ya pasó por ${ciudadObjetivo}`);
+    return res.json({ error: true, texto: `El colectivo ya pasó por ${ciudadObjetivo}.` });
+  }
+
   if (objetivoIdx < originIdx) {
-    // Ya pasó: ciudad objetivo antes del origin
+    console.log(`Ya pasó por ${ciudadObjetivo} (antes de origin)`);
     return res.json({ error: true, texto: `El colectivo ya pasó por ${ciudadObjetivo}.` });
   }
   if (objetivoIdx === originIdx) {
-    // Está en la ciudad origin
+    console.log(`Está en ${ciudadObjetivo}`);
     return res.json({ info: true, texto: `El colectivo está actualmente en ${ciudadObjetivo}.` });
   }
-  // Si stops vacío y bus está en destino compartido, ya terminó el tramo compartido
+
+  // --- Si llegó a destination ---
+  const destinoObjCompartido = cities[destinationCityID];
+  const destinoCoordCompartido = destinoObjCompartido ? parseCoord(destinoObjCompartido.coord) : null;
   if (
     stops.length === 0 &&
     coordsAreEqual(busCoord, destinoCoordCompartido)
   ) {
-    // Ya llegó a destino, cualquier ciudad entre origin y destination ya pasó excepto destination
     if (objetivoIdx === destinationIdx) {
+      console.log(`Está en destino compartido: ${ciudadObjetivo}`);
       return res.json({ info: true, texto: `El colectivo está actualmente en ${ciudadObjetivo}.` });
     } else {
+      console.log(`Ya pasó por ${ciudadObjetivo} (llegó a destino)`);
       return res.json({ error: true, texto: `El colectivo ya pasó por ${ciudadObjetivo}.` });
     }
   }
-  // Si la ciudad objetivo está entre origin y nextStopIdx (no inclusive), y no está en stops, ya pasó
-  if (
-    stops.length > 0 &&
-    objetivoIdx < nextStopIdx
-  ) {
-    return res.json({ error: true, texto: `El colectivo ya pasó por ${ciudadObjetivo}.` });
-  }
-  // Si la ciudad objetivo está igual a la próxima parada
-  if (
-    stops.length > 0 &&
-    objetivoIdx === nextStopIdx
-  ) {
-    // Si la ubicación actual coincide con la parada, está en esa ciudad
-    const nextStopObj = cities[cityIDsArray[nextStopIdx]];
-    const nextStopCoord = nextStopObj ? parseCoord(nextStopObj.coord) : null;
-    if (coordsAreEqual(busCoord, nextStopCoord)) {
-      return res.json({ info: true, texto: `El colectivo está actualmente en ${ciudadObjetivo}.` });
-    }
-    // Si no, puede estimar tiempo
-  }
-  // Si la ciudad objetivo está después del próximo stop o después de destination, puede estimar tiempo
-  // Estima tiempo para cualquier ciudad entre origin y destination (inclusive) o después de destination si el tramo compartido sigue activo
 
-  // Paradas intermedias entre origin y objetivo
+  // --- Si la ciudad objetivo está adelante, puede estimar tiempo
+  console.log(`Va a calcular tiempo para ${ciudadObjetivo}`);
+
   let intermediates = stops
     .filter(stop => {
       const stopID = getCityIDByName(stop.name, cities);
@@ -157,6 +164,7 @@ export const obtenerTiempoEstimado = async (req, res) => {
   // --- Coordenadas destino ---
   const destinoObj = cities[objetivoID];
   if (!destinoObj || !destinoObj.coord) {
+    console.log("Destino objetivo no encontrado:", objetivoID);
     return res.status(404).json({ error: true, texto: "No se encontró la ciudad objetivo en la base." });
   }
   const destinoCoord = parseCoord(destinoObj.coord);
@@ -225,6 +233,8 @@ export const obtenerTiempoEstimado = async (req, res) => {
     const formattedDate = new Intl.DateTimeFormat('es-AR', {
       dateStyle: 'full', timeStyle: 'short'
     }).format(new Date(locationObj.date));
+
+    console.log(`Respuesta: tiempo para ${ciudadObjetivo}: ${horas}h ${min}m`);
 
     return res.json({
       tiempo: `${horas}h ${min}m`,
