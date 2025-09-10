@@ -3,7 +3,7 @@ import { getHolidays } from '../utils/holiday.js'
 import axios from 'axios'
 import { get, ref } from 'firebase/database'
 import { db } from '../firebase/config.js'
-
+import { DateTime } from 'luxon';
 // Helpers
 function normalize(str) {
   return (str || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
@@ -40,8 +40,15 @@ export const obtenerTiempoEstimado = async (req, res) => {
     get(citiesRef), get(recorridosRef), get(locationRef)
   ]);
 
-  if (!citiesSnap.exists() || !recorridosSnap.exists() || !locationSnap.exists()) {
-    return res.status(500).json({ error: true, texto: "Error accediendo a la base de datos." });
+  // Manejo de errores más amigable
+  if (!recorridosSnap.exists()) {
+    return res.json({ error: true, texto: "No se encontró información para el recorrido solicitado." });
+  }
+  if (!citiesSnap.exists()) {
+    return res.json({ error: true, texto: "No se encontró información de ciudades." });
+  }
+  if (!locationSnap.exists()) {
+    return res.json({ error: true, texto: "No se encontró información de ubicación para este recorrido." });
   }
 
   const cities = citiesSnap.val();
@@ -50,20 +57,20 @@ export const obtenerTiempoEstimado = async (req, res) => {
 
   // --- Recorrido completo ---
   const recorridoObj = recorridos[recorridoID];
-  if (!recorridoObj) return res.json({ error: true, texto: "Recorrido no encontrado." });
+  if (!recorridoObj) {
+    return res.json({ error: true, texto: "El recorrido solicitado no existe en el sistema." });
+  }
   const citiesArray = recorridoObj.cities.filter(Boolean); // [{cityID, ...}]
   const cityIDsArray = citiesArray.map(c => c.cityID);
 
   // --- IDs e índices relevantes ---
   const objetivoID = getCityIDByName(ciudadObjetivo, cities);
   if (!objetivoID) {
-    console.log("Ciudad objetivo no existe:", ciudadObjetivo);
-    return res.json({ error: true, texto: `La ciudad ${ciudadObjetivo} no existe en el sistema.` });
+    return res.json({ error: true, texto: `La ciudad "${ciudadObjetivo}" no existe en el sistema.` });
   }
   const objetivoIdx = cityIDsArray.indexOf(objetivoID);
   if (objetivoIdx === -1) {
-    console.log("Ciudad objetivo no está en el recorrido:", ciudadObjetivo, cityIDsArray);
-    return res.json({ error: true, texto: `La ciudad ${ciudadObjetivo} no está en el recorrido.` });
+    return res.json({ error: true, texto: `La ciudad "${ciudadObjetivo}" no está en el recorrido seleccionado.` });
   }
 
   const originCityID = getCityIDByName(locationObj.origin, cities);
@@ -72,25 +79,16 @@ export const obtenerTiempoEstimado = async (req, res) => {
   const destinationCityID = getCityIDByName(locationObj.destination, cities);
   const destinationIdx = cityIDsArray.indexOf(destinationCityID);
 
-  console.log("Recorrido:", recorridoID, recorridoObj.name);
-  console.log("CitiesArray:", citiesArray.map(c => c.cityID));
-  console.log("Origin:", locationObj.origin, "originIdx:", originIdx);
-  console.log("Destination:", locationObj.destination, "destinationIdx:", destinationIdx);
-  console.log("Ciudad objetivo:", ciudadObjetivo, "objetivoID:", objetivoID, "objetivoIdx:", objetivoIdx);
-
   // --- Paradas intermedias restantes en este viaje ---
   const stops = Array.isArray(locationObj.stops) ? locationObj.stops : [];
-  console.log("Stops:", stops.map(s => s.name));
 
   // --- Ubicación actual del colectivo ---
   const busCoord = locationObj.location
     ? { lat: Number(locationObj.location.latitude), lng: Number(locationObj.location.longitude) }
     : null;
   if (!busCoord || isNaN(busCoord.lat) || isNaN(busCoord.lng)) {
-    console.log("Ubicación actual inválida:", locationObj.location);
     return res.json({ error: true, texto: "No se pudo obtener la ubicación actual del colectivo." });
   }
-  console.log("Ubicación actual:", busCoord);
 
   // --- Determinar índice del próximo stop (o destination si no hay stops) ---
   let nextStopIdx = destinationIdx;
@@ -98,30 +96,24 @@ export const obtenerTiempoEstimado = async (req, res) => {
     const nextStopID = getCityIDByName(stops[0].name, cities);
     nextStopIdx = cityIDsArray.indexOf(nextStopID);
   }
-  console.log("NextStopIdx:", nextStopIdx, "stop:", stops[0]?.name);
 
   // --- Lógica robusta: ¿ya pasó por la ciudad objetivo? ---
   const stopsNamesNorm = stops.map(s => normalize(s.name));
   const objetivoNorm = normalize(ciudadObjetivo);
-
-  console.log(`Debug lógica de "ya pasó": objetivoIdx=${objetivoIdx}, originIdx=${originIdx}, nextStopIdx=${nextStopIdx}, estáEnStops=${stopsNamesNorm.includes(objetivoNorm)}`);
 
   if (
     objetivoIdx > originIdx &&
     objetivoIdx < nextStopIdx &&
     !stopsNamesNorm.includes(objetivoNorm)
   ) {
-    console.log(`Ya pasó por ${ciudadObjetivo}`);
-    return res.json({ error: true, texto: `El colectivo ya pasó por ${ciudadObjetivo}.` });
+    return res.json({ error: true, texto: `El colectivo ya pasó por "${ciudadObjetivo}".` });
   }
 
   if (objetivoIdx < originIdx) {
-    console.log(`Ya pasó por ${ciudadObjetivo} (antes de origin)`);
-    return res.json({ error: true, texto: `El colectivo ya pasó por ${ciudadObjetivo}.` });
+    return res.json({ error: true, texto: `El colectivo ya pasó por "${ciudadObjetivo}".` });
   }
   if (objetivoIdx === originIdx) {
-    console.log(`Está en ${ciudadObjetivo}`);
-    return res.json({ info: true, texto: `El colectivo está actualmente en ${ciudadObjetivo}.` });
+    return res.json({ info: true, texto: `El colectivo está actualmente en "${ciudadObjetivo}".` });
   }
 
   // --- Si llegó a destination ---
@@ -132,16 +124,13 @@ export const obtenerTiempoEstimado = async (req, res) => {
     coordsAreEqual(busCoord, destinoCoordCompartido)
   ) {
     if (objetivoIdx === destinationIdx) {
-      console.log(`Está en destino compartido: ${ciudadObjetivo}`);
-      return res.json({ info: true, texto: `El colectivo está actualmente en ${ciudadObjetivo}.` });
+      return res.json({ info: true, texto: `El colectivo está actualmente en "${ciudadObjetivo}".` });
     } else {
-      console.log(`Ya pasó por ${ciudadObjetivo} (llegó a destino)`);
-      return res.json({ error: true, texto: `El colectivo ya pasó por ${ciudadObjetivo}.` });
+      return res.json({ error: true, texto: `El colectivo ya pasó por "${ciudadObjetivo}".` });
     }
   }
 
-  // --- Si la ciudad objetivo está adelante, puede estimar tiempo
-  console.log(`Va a calcular tiempo para ${ciudadObjetivo}`);
+  // --- Si la ciudad objetivo está adelante, puede estimar tiempo ---
 
   let intermediates = stops
     .filter(stop => {
@@ -164,7 +153,6 @@ export const obtenerTiempoEstimado = async (req, res) => {
   // --- Coordenadas destino ---
   const destinoObj = cities[objetivoID];
   if (!destinoObj || !destinoObj.coord) {
-    console.log("Destino objetivo no encontrado:", objetivoID);
     return res.status(404).json({ error: true, texto: "No se encontró la ciudad objetivo en la base." });
   }
   const destinoCoord = parseCoord(destinoObj.coord);
@@ -223,22 +211,14 @@ export const obtenerTiempoEstimado = async (req, res) => {
     const horas = Math.floor(totalMin / 60);
     const min = totalMin % 60;
 
-    const estimatedArrival = new Date();
-    estimatedArrival.setMinutes(estimatedArrival.getMinutes() + totalMin);
-    estimatedArrival.setHours(estimatedArrival.getHours() + 3);
+    // ---- AJUSTE DE HORA ARGENTINA ----
+    // Hora estimada de llegada
 
-    const horaEstimada = new Intl.DateTimeFormat('es-AR', {
-      hour: '2-digit', minute: '2-digit'
-    }).format(estimatedArrival);
+    const estimatedArrival = DateTime.utc().plus({ minutes: totalMin }).setZone('America/Argentina/Buenos_Aires');
+    const horaEstimada = estimatedArrival.toFormat('HH:mm') + " hs";
 
-    const ubicacionDate = new Date(locationObj.date);
-    ubicacionDate.setHours(ubicacionDate.getHours() + 3);
-
-    const formattedDate = new Intl.DateTimeFormat('es-AR', {
-      dateStyle: 'full', timeStyle: 'short'
-    }).format(ubicacionDate);
-
-    console.log(`Respuesta: tiempo para ${ciudadObjetivo}: ${horas}h ${min}m`);
+    const ubicacionDate = DateTime.fromMillis(locationObj.date, { zone: 'utc' }).setZone('America/Argentina/Buenos_Aires');
+    const formattedDate = ubicacionDate.toLocaleString(DateTime.DATETIME_FULL);
 
     return res.json({
       tiempo: `${horas}h ${min}m`,
@@ -250,10 +230,10 @@ export const obtenerTiempoEstimado = async (req, res) => {
       ubicacion: formattedDate,
     });
   } catch (error) {
-    console.error(error);
+    // Manejo de error más amigable
     return res.status(500).json({
       error: true,
-      msg: "Error al calcular la ruta",
+      texto: "No hay información disponible de este recorrido. Por favor intenta más tarde.",
       detalle: error.message
     });
   }
