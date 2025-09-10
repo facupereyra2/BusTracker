@@ -1,5 +1,6 @@
 import { Picker } from '@react-native-picker/picker';
 import * as Location from 'expo-location';
+import * as Notifications from 'expo-notifications';
 import * as TaskManager from 'expo-task-manager';
 import { onValue, ref, remove, set } from 'firebase/database';
 import { useEffect, useState } from 'react';
@@ -46,6 +47,25 @@ function getIntermediateStops(citiesArray, citiesData, originID, destID) {
   }));
 }
 
+// Esta función se usará para detener el tracking desde el task
+async function stopTrackingFromTask() {
+  try {
+    await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
+    // Opcional: enviar una notificación local
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: "¡Llegaste a tu destino!",
+        body: "El seguimiento de ubicación se detuvo automáticamente.",
+        data: { screen: 'StopLocation' }
+      },
+      trigger: null
+    });
+    console.log("Ubicación detenida automáticamente al llegar al destino.");
+  } catch (e) {
+    console.log("Error deteniendo tracking:", e);
+  }
+}
+
 // TaskManager para guardar ubicación y stops pendientes
 TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
   if (error) return;
@@ -56,6 +76,18 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
       const currentCoord = `${location.coords.latitude},${location.coords.longitude}`;
       // Solo filtrar stops, no inicializar nunca
       globalShareData.stops = filterPendingStops(globalShareData.stops || [], currentCoord);
+
+      // Verifica llegada al destino
+      if (globalShareData.destinationID && globalShareData.citiesData) {
+        const destinationCoord = globalShareData.citiesData[globalShareData.destinationID]?.coord;
+        if (destinationCoord) {
+          const distanceToDest = haversineDistance(destinationCoord, currentCoord);
+          if (distanceToDest <= STOP_THRESHOLD_METERS) {
+            // Llegó al destino: detiene el tracking
+            await stopTrackingFromTask();
+          }
+        }
+      }
 
       await set(ref(db, `location/${globalShareData.routeId}`), {
         origin: globalShareData.origin,
@@ -167,7 +199,8 @@ export default function LocationScreen() {
     setRouteId('');
   }, [origin, destination, cities, recorridos]);
 
-    useEffect(() => {
+  // Sincroniza tracking con context
+  useEffect(() => {
     setTracking(isTracking);
   }, [isTracking]);
 
@@ -207,88 +240,106 @@ export default function LocationScreen() {
     setRouteId(selectedSchedule);
   }, [origin, originCoord, destination, selectedSchedule, schedules, cities, recorridos]);
 
+  // Chequea periódicamente si el tracking sigue activo (por si se detuvo automáticamente)
+  useEffect(() => {
+    let interval;
+    if (tracking) {
+      interval = setInterval(async () => {
+        const isActive = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME);
+        if (!isActive) {
+          setTracking(false);
+          setIsTracking(false);
+          setModalMsg('¡Llegaste a tu destino! El seguimiento se detuvo automáticamente.');
+          setModalVisible(true);
+        }
+      }, 3000); // chequea cada 3 segundos
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [tracking, setIsTracking]);
+
   const canShare = origin && destination && selectedSchedule;
 
-async function showLocationTrackingNotification() {
-  try {
-    await Notifications.scheduleNotificationAsync({
-      content: {
-        title: "Compartiendo ubicación",
-        body: "Toca aquí para dejar de compartir ubicación",
-        data: { screen: 'StopLocation' }
-      },
-      trigger: null
-    });
-    console.log("Notificación enviada correctamente");
-  } catch (e) {
-    console.log("Error al enviar la notificación:", e);
-    // Incluso podrías mostrar un modal con el error
+  async function showLocationTrackingNotification() {
+    try {
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title: "Compartiendo ubicación",
+          body: "Toca aquí para dejar de compartir ubicación",
+          data: { screen: 'StopLocation' }
+        },
+        trigger: null
+      });
+      console.log("Notificación enviada correctamente");
+    } catch (e) {
+      console.log("Error al enviar la notificación:", e);
+    }
   }
-}
 
-const startBackgroundTracking = async () => {
-  try {
-    console.log('Iniciando seguimiento de ubicación en segundo plano');
-    await showLocationTrackingNotification();
-    // Limpiar ubicación previa en la DB
-    if (globalShareData.routeId) {
-      await remove(ref(db, `location/${globalShareData.routeId}`));
-    }
+  const startBackgroundTracking = async () => {
+    try {
+      console.log('Iniciando seguimiento de ubicación en segundo plano');
+      await showLocationTrackingNotification();
+      // Limpiar ubicación previa en la DB
+      if (globalShareData.routeId) {
+        await remove(ref(db, `location/${globalShareData.routeId}`));
+      }
 
-    // FORZAR REINICIO DE STOPS
-    const originID = Object.keys(cities).find(key => cities[key].name === origin);
-    const destinationID = Object.keys(cities).find(key => cities[key].name === destination);
-    const recorridoObj = recorridos[selectedSchedule];
-    const citiesArray = recorridoObj ? recorridoObj.cities.filter(Boolean) : [];
-    globalShareData.stops = getIntermediateStops(
-      citiesArray,
-      cities,
-      originID,
-      destinationID
-    );
+      // FORZAR REINICIO DE STOPS
+      const originID = Object.keys(cities).find(key => cities[key].name === origin);
+      const destinationID = Object.keys(cities).find(key => cities[key].name === destination);
+      const recorridoObj = recorridos[selectedSchedule];
+      const citiesArray = recorridoObj ? recorridoObj.cities.filter(Boolean) : [];
+      globalShareData.stops = getIntermediateStops(
+        citiesArray,
+        cities,
+        originID,
+        destinationID
+      );
 
-    // 1. Solicitar permiso foreground
-    let { status: fgStatus } = await Location.requestForegroundPermissionsAsync();
-    if (fgStatus !== 'granted') {
-      setModalMsg('No se puede acceder a la ubicación (foreground)');
+      // 1. Solicitar permiso foreground
+      let { status: fgStatus } = await Location.requestForegroundPermissionsAsync();
+      if (fgStatus !== 'granted') {
+        setModalMsg('No se puede acceder a la ubicación (foreground)');
+        setModalVisible(true);
+        console.log('Permiso de ubicación foreground DENEGADO');
+        return;
+      }
+
+      // 2. Solicitar permiso background (después de foreground)
+      let { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
+      if (bgStatus !== 'granted') {
+        setModalMsg('No se puede acceder a la ubicación en segundo plano.\nPara Android 14/15, habilitá "Permitir siempre" en Ajustes > Apps > BusTracker > Permisos > Ubicación.');
+        setModalVisible(true);
+        console.log('Permiso de ubicación background DENEGADO');
+        return;
+      }
+
+      // 3. Iniciar el tracking en background
+      await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
+        accuracy: Location.Accuracy.Highest,
+        timeInterval: 10000,
+        distanceInterval: 0,
+        showsBackgroundLocationIndicator: true,
+        foregroundService: {
+          notificationTitle: 'Compartiendo ubicación',
+          notificationBody: 'Tu ubicación se está compartiendo en segundo plano.',
+        },
+      });
+
+      setTracking(true);
+      setIsTracking(true);
+      setModalMsg('¡Listo! Tu ubicación se está compartiendo.');
       setModalVisible(true);
-      console.log('Permiso de ubicación foreground DENEGADO');
-      return;
-    }
-
-    // 2. Solicitar permiso background (después de foreground)
-    let { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
-    if (bgStatus !== 'granted') {
-      setModalMsg('No se puede acceder a la ubicación en segundo plano.\nPara Android 14/15, habilitá "Permitir siempre" en Ajustes > Apps > BusTracker > Permisos > Ubicación.');
+      console.log('Tracking iniciado en background');
+    } catch (e) {
+      console.log("Error en startBackgroundTracking:", e);
+      setModalMsg('Error al iniciar el tracking: ' + e.message);
       setModalVisible(true);
-      console.log('Permiso de ubicación background DENEGADO');
-      return;
+      console.log('Error en startBackgroundTracking:', e);
     }
-
-    // 3. Iniciar el tracking en background
-    await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
-      accuracy: Location.Accuracy.Highest,
-      timeInterval: 10000,
-      distanceInterval: 0,
-      showsBackgroundLocationIndicator: true,
-      foregroundService: {
-        notificationTitle: 'Compartiendo ubicación',
-        notificationBody: 'Tu ubicación se está compartiendo en segundo plano.',
-      },
-    });
-
-    setTracking(true);
-    setIsTracking(true);
-    setModalMsg('¡Listo! Tu ubicación se está compartiendo.');
-    setModalVisible(true);
-    console.log('Tracking iniciado en background');
-  } catch (e) {
-    console.log("Error en startBackgroundTracking:", e);
-    setModalMsg('Error al iniciar el tracking: ' + e.message);
-    setModalVisible(true);
-    console.log('Error en startBackgroundTracking:', e);
-  }
-};
+  };
 
   const stopBackgroundTracking = async () => {
     await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);

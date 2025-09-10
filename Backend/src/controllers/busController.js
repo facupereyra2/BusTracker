@@ -73,7 +73,7 @@ export const obtenerTiempoEstimado = async (req, res) => {
   const destinationIdx = cityIDsArray.indexOf(destinationCityID);
 
   console.log("Recorrido:", recorridoID, recorridoObj.name);
-  console.log("CitiesArray:", citiesArray.map(c=>c.cityID));
+  console.log("CitiesArray:", citiesArray.map(c => c.cityID));
   console.log("Origin:", locationObj.origin, "originIdx:", originIdx);
   console.log("Destination:", locationObj.destination, "destinationIdx:", destinationIdx);
   console.log("Ciudad objetivo:", ciudadObjetivo, "objetivoID:", objetivoID, "objetivoIdx:", objetivoIdx);
@@ -225,14 +225,18 @@ export const obtenerTiempoEstimado = async (req, res) => {
 
     const estimatedArrival = new Date();
     estimatedArrival.setMinutes(estimatedArrival.getMinutes() + totalMin);
+    estimatedArrival.setHours(estimatedArrival.getHours() + 3);
 
     const horaEstimada = new Intl.DateTimeFormat('es-AR', {
       hour: '2-digit', minute: '2-digit'
     }).format(estimatedArrival);
 
+    const ubicacionDate = new Date(locationObj.date);
+    ubicacionDate.setHours(ubicacionDate.getHours() + 3);
+
     const formattedDate = new Intl.DateTimeFormat('es-AR', {
       dateStyle: 'full', timeStyle: 'short'
-    }).format(new Date(locationObj.date));
+    }).format(ubicacionDate);
 
     console.log(`Respuesta: tiempo para ${ciudadObjetivo}: ${horas}h ${min}m`);
 
