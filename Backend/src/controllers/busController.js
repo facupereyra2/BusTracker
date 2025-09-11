@@ -151,7 +151,7 @@ export const obtenerTiempoEstimado = async (req, res) => {
     return res.json({ error: true, texto: `El colectivo ya pasó por "${ciudadObjetivo}".` });
   }
   if (objetivoIdx === originIdx) {
-    return res.json({ info: true, texto: `El colectivo está actualmente en "${ciudadObjetivo}".` });
+    return res.json({ error: true, texto: `El colectivo está actualmente en "${ciudadObjetivo}".` });
   }
 
   // --- Si llegó a destination ---
