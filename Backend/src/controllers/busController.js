@@ -4,6 +4,7 @@ import axios from 'axios'
 import { get, ref } from 'firebase/database'
 import { db } from '../firebase/config.js'
 import { DateTime } from 'luxon';
+
 // Helpers
 function normalize(str) {
   return (str || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
@@ -40,7 +41,7 @@ export const obtenerTiempoEstimado = async (req, res) => {
     get(citiesRef), get(recorridosRef), get(locationRef)
   ]);
 
-  // Manejo de errores más amigable
+  // --- Validaciones básicas ---
   if (!recorridosSnap.exists()) {
     return res.json({ error: true, texto: "No se encontró información para el recorrido solicitado." });
   }
@@ -55,6 +56,23 @@ export const obtenerTiempoEstimado = async (req, res) => {
   const recorridos = recorridosSnap.val();
   const locationObj = locationSnap.val();
 
+  // --- Validar formato y existencia de date ---
+  if (!locationObj.date || isNaN(Number(locationObj.date))) {
+    return res.json({ error: true, texto: "La fecha de la última ubicación compartida es inválida." });
+  }
+
+  // --- Chequeo de antigüedad de la ubicación compartida ---
+  const ubicacionDate = DateTime.fromMillis(Number(locationObj.date));
+  const ahora = DateTime.utc();
+  const diferenciaHoras = ahora.diff(ubicacionDate, 'hours').hours;
+
+  if (diferenciaHoras >= 3) {
+    return res.json({ error: true, texto: "No es posible informar el tiempo porque la última ubicación compartida es muy vieja (más de 3 horas)." });
+  }
+  if (diferenciaHoras < 0) {
+    return res.json({ error: true, texto: "La fecha de la ubicación compartida parece ser del futuro. Verifica el reloj del dispositivo." });
+  }
+
   // --- Recorrido completo ---
   const recorridoObj = recorridos[recorridoID];
   if (!recorridoObj) {
@@ -62,6 +80,11 @@ export const obtenerTiempoEstimado = async (req, res) => {
   }
   const citiesArray = recorridoObj.cities.filter(Boolean); // [{cityID, ...}]
   const cityIDsArray = citiesArray.map(c => c.cityID);
+
+  // --- Validación de recorrido suficiente ---
+  if (cityIDsArray.length < 2) {
+    return res.json({ error: true, texto: "El recorrido seleccionado no tiene suficientes ciudades para calcular." });
+  }
 
   // --- IDs e índices relevantes ---
   const objetivoID = getCityIDByName(ciudadObjetivo, cities);
@@ -76,6 +99,14 @@ export const obtenerTiempoEstimado = async (req, res) => {
   const originCityID = getCityIDByName(locationObj.origin, cities);
   const originIdx = cityIDsArray.indexOf(originCityID);
 
+  // --- Validación de índices consistentes ---
+  if (originIdx === -1) {
+    return res.json({ error: true, texto: "La ciudad de origen actual no se encuentra en el recorrido." });
+  }
+  if (originIdx > objetivoIdx) {
+    return res.json({ error: true, texto: "La ciudad objetivo está antes que el origen actual. Verifica los datos del recorrido y la ubicación compartida." });
+  }
+
   const destinationCityID = getCityIDByName(locationObj.destination, cities);
   const destinationIdx = cityIDsArray.indexOf(destinationCityID);
 
@@ -88,6 +119,13 @@ export const obtenerTiempoEstimado = async (req, res) => {
     : null;
   if (!busCoord || isNaN(busCoord.lat) || isNaN(busCoord.lng)) {
     return res.json({ error: true, texto: "No se pudo obtener la ubicación actual del colectivo." });
+  }
+
+  // --- Validar coordenadas de origen y destino ---
+  const originObj = cities[originCityID];
+  const originCoord = originObj ? parseCoord(originObj.coord) : null;
+  if (!originCoord || isNaN(originCoord.lat) || isNaN(originCoord.lng)) {
+    return res.json({ error: true, texto: "No se pudo obtener las coordenadas de la ciudad de origen." });
   }
 
   // --- Determinar índice del próximo stop (o destination si no hay stops) ---
@@ -119,6 +157,10 @@ export const obtenerTiempoEstimado = async (req, res) => {
   // --- Si llegó a destination ---
   const destinoObjCompartido = cities[destinationCityID];
   const destinoCoordCompartido = destinoObjCompartido ? parseCoord(destinoObjCompartido.coord) : null;
+  if (!destinoCoordCompartido || isNaN(destinoCoordCompartido.lat) || isNaN(destinoCoordCompartido.lng)) {
+    return res.json({ error: true, texto: "No se pudo obtener las coordenadas de la ciudad destino compartida." });
+  }
+
   if (
     stops.length === 0 &&
     coordsAreEqual(busCoord, destinoCoordCompartido)
@@ -130,25 +172,31 @@ export const obtenerTiempoEstimado = async (req, res) => {
     }
   }
 
-  // --- Si la ciudad objetivo está adelante, puede estimar tiempo ---
+  // --- Paradas intermedias entre ORIGEN y CIUDAD OBJETIVO (del recorrido completo) ---
+  const paradasIntermediasIDs = cityIDsArray.slice(originIdx + 1, objetivoIdx); // IDs entre origen y objetivo (excluyendo ambos)
+  const paradasIntermedias = paradasIntermediasIDs.map(cid => cities[cid]?.name).filter(Boolean);
 
-  let intermediates = stops
-    .filter(stop => {
-      const stopID = getCityIDByName(stop.name, cities);
-      const stopIdx = cityIDsArray.indexOf(stopID);
-      return stopIdx > originIdx && stopIdx < objetivoIdx;
-    })
-    .map(stop => ({
+  // --- Validación límite de paradas intermedias ---
+  if (paradasIntermedias.length > 10) {
+    return res.json({ error: true, texto: "Demasiadas paradas intermedias para calcular el tiempo estimado. Por favor, consulta por tramos más cortos." });
+  }
+
+  const numInterStops = paradasIntermedias.length;
+  const minutosExtraPorParadas = numInterStops * 5;
+
+  // Si necesitas las coords para Google Maps intermediates:
+  const intermediates = paradasIntermediasIDs.map(cid => {
+    const coord = cities[cid]?.coord;
+    const parsed = parseCoord(coord);
+    return {
       location: {
         latLng: {
-          latitude: parseCoord(stop.coord)?.lat,
-          longitude: parseCoord(stop.coord)?.lng
+          latitude: parsed?.lat,
+          longitude: parsed?.lng
         }
       }
-    }));
-
-  const numInterStops = intermediates.length;
-  const minutosExtraPorParadas = numInterStops * 5;
+    }
+  });
 
   // --- Coordenadas destino ---
   const destinoObj = cities[objetivoID];
@@ -156,6 +204,9 @@ export const obtenerTiempoEstimado = async (req, res) => {
     return res.status(404).json({ error: true, texto: "No se encontró la ciudad objetivo en la base." });
   }
   const destinoCoord = parseCoord(destinoObj.coord);
+  if (!destinoCoord || isNaN(destinoCoord.lat) || isNaN(destinoCoord.lng)) {
+    return res.json({ error: true, texto: "No se pudo obtener las coordenadas de la ciudad objetivo." });
+  }
 
   // --- Google Maps API ---
   const date = new Date();
@@ -182,9 +233,29 @@ export const obtenerTiempoEstimado = async (req, res) => {
         }
       }
     );
-    const clima = await axios.get(`https://api.openweathermap.org/data/2.5/weather?lat=${busCoord.lat}&lon=${busCoord.lng}&appid=d3918607c24dc94a2dd83e3a36f7bd3c&units=metric&lang=es`);
-    const weather = clima.data.weather[0].main;
-    const visibility = clima.data.visibility;
+
+    // --- Validar respuesta de Google Maps ---
+    if (
+      !routeRes.data ||
+      !routeRes.data.routes ||
+      !routeRes.data.routes[0] ||
+      !routeRes.data.routes[0].duration
+    ) {
+      return res.json({ error: true, texto: "No fue posible obtener una ruta válida desde Google Maps. Intenta nuevamente más tarde." });
+    }
+
+    // --- Clima ---
+    let weather = 'Sin datos';
+    let visibility = '-';
+    try {
+      const clima = await axios.get(`https://api.openweathermap.org/data/2.5/weather?lat=${busCoord.lat}&lon=${busCoord.lng}&appid=d3918607c24dc94a2dd83e3a36f7bd3c&units=metric&lang=es`);
+      weather = clima.data?.weather?.[0]?.main || 'Sin datos';
+      visibility = clima.data?.visibility || '-';
+    } catch (climaErr) {
+      // Si falla, no bloquea la respuesta principal
+      weather = 'No disponible';
+      visibility = '-';
+    }
 
     let factorClima = 1;
     if (weather === 'Rain') factorClima = visibility < 500 ? 1.2 : 1.1;
@@ -207,26 +278,27 @@ export const obtenerTiempoEstimado = async (req, res) => {
 
     const busDelayFactor = 1.15;
     const duracionSeg = parseInt(routeRes.data.routes[0].duration.replace('s', ''));
+    if (isNaN(duracionSeg) || duracionSeg <= 0) {
+      return res.json({ error: true, texto: "No fue posible calcular la duración de la ruta. Intenta nuevamente más tarde." });
+    }
     const totalMin = Math.floor((duracionSeg / 60) * factorClima * dayAdjustmentFactor * busDelayFactor) + minutosExtraPorParadas;
     const horas = Math.floor(totalMin / 60);
     const min = totalMin % 60;
 
     // ---- AJUSTE DE HORA ARGENTINA ----
-    // Hora estimada de llegada
-
     const estimatedArrival = DateTime.utc().plus({ minutes: totalMin }).setZone('America/Argentina/Buenos_Aires');
     const horaEstimada = estimatedArrival.toFormat('HH:mm') + " hs";
 
-    const ubicacionDate = DateTime.fromMillis(locationObj.date, { zone: 'utc' }).setZone('America/Argentina/Buenos_Aires');
-    const formattedDate = ubicacionDate.toLocaleString(DateTime.DATETIME_FULL, { locale: 'es' });
+    const formattedDate = ubicacionDate.setZone('America/Argentina/Buenos_Aires').toLocaleString(DateTime.DATETIME_FULL, { locale: 'es' });
 
     return res.json({
       tiempo: `${horas}h ${min}m`,
-      hora: `${horaEstimada} hs`,
+      hora: `${horaEstimada}`,
       clima: `${weather}, visibilidad ${visibility}m.`,
       dia: `${isWeekend ? 'Fin de semana' : 'Laboral'}${isHoliday ? ' y feriado' : ''}.`,
       ajustes: `clima +${Math.round((factorClima - 1) * 100)}%, día +${Math.round((dayAdjustmentFactor - 1) * 100)}%.`,
       paradas: `${numInterStops} (+${minutosExtraPorParadas} min)`,
+      paradasIntermedias: paradasIntermedias.join(', '),
       ubicacion: formattedDate,
     });
   } catch (error) {
