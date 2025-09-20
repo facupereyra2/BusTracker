@@ -110,8 +110,32 @@ export const obtenerTiempoEstimado = async (req, res) => {
   const destinationCityID = getCityIDByName(locationObj.destination, cities);
   const destinationIdx = cityIDsArray.indexOf(destinationCityID);
 
-  // --- Paradas intermedias restantes en este viaje ---
+  // --- Paradas intermedias relevantes (solo stops reales entre origen actual y objetivo) ---
   const stops = Array.isArray(locationObj.stops) ? locationObj.stops : [];
+  const relevantStops = stops.filter(stop => {
+    const stopID = getCityIDByName(stop.name, cities);
+    const stopIdx = cityIDsArray.indexOf(stopID);
+    // Solo los que están después del origen y antes del objetivo
+    return stopIdx > originIdx && stopIdx < objetivoIdx;
+  });
+  const numInterStops = relevantStops.length;
+  const minutosExtraPorParadas = numInterStops * 5;
+  const paradasIntermedias = relevantStops.map(s => s.name);
+
+  // Si necesitas las coords para Google Maps intermediates:
+  const intermediates = relevantStops.map(stop => {
+    const stopID = getCityIDByName(stop.name, cities);
+    const coord = cities[stopID]?.coord;
+    const parsed = parseCoord(coord);
+    return {
+      location: {
+        latLng: {
+          latitude: parsed?.lat,
+          longitude: parsed?.lng
+        }
+      }
+    };
+  });
 
   // --- Ubicación actual del colectivo ---
   const busCoord = locationObj.location
@@ -171,32 +195,6 @@ export const obtenerTiempoEstimado = async (req, res) => {
       return res.json({ error: true, texto: `El colectivo ya pasó por "${ciudadObjetivo}".` });
     }
   }
-
-  // --- Paradas intermedias entre ORIGEN y CIUDAD OBJETIVO (del recorrido completo) ---
-  const paradasIntermediasIDs = cityIDsArray.slice(originIdx + 1, objetivoIdx); // IDs entre origen y objetivo (excluyendo ambos)
-  const paradasIntermedias = paradasIntermediasIDs.map(cid => cities[cid]?.name).filter(Boolean);
-
-  // --- Validación límite de paradas intermedias ---
-  if (paradasIntermedias.length > 10) {
-    return res.json({ error: true, texto: "Demasiadas paradas intermedias para calcular el tiempo estimado. Por favor, consulta por tramos más cortos." });
-  }
-
-  const numInterStops = paradasIntermedias.length;
-  const minutosExtraPorParadas = numInterStops * 5;
-
-  // Si necesitas las coords para Google Maps intermediates:
-  const intermediates = paradasIntermediasIDs.map(cid => {
-    const coord = cities[cid]?.coord;
-    const parsed = parseCoord(coord);
-    return {
-      location: {
-        latLng: {
-          latitude: parsed?.lat,
-          longitude: parsed?.lng
-        }
-      }
-    }
-  });
 
   // --- Coordenadas destino ---
   const destinoObj = cities[objetivoID];
