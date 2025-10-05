@@ -16,27 +16,27 @@ let globalShareData = {};
 const STOP_THRESHOLD_METERS = 120;
 
 // Calcula la distancia entre dos coordenadas (en metros)
-function haversineDistance(coord1, coord2) {
+const haversineDistance = (coord1, coord2) => {
   const [lat1, lon1] = coord1.split(',').map(Number);
   const [lat2, lon2] = coord2.split(',').map(Number);
   const R = 6371e3;
-  const φ1 = lat1 * Math.PI/180, φ2 = lat2 * Math.PI/180;
-  const Δφ = (lat2-lat1) * Math.PI/180;
-  const Δλ = (lon2-lon1) * Math.PI/180;
-  const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
-            Math.cos(φ1) * Math.cos(φ2) *
-            Math.sin(Δλ/2) * Math.sin(Δλ/2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  const φ1 = lat1 * Math.PI / 180, φ2 = lat2 * Math.PI / 180;
+  const Δφ = (lat2 - lat1) * Math.PI / 180;
+  const Δλ = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+    Math.cos(φ1) * Math.cos(φ2) *
+    Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
 }
 
 // Devuelve solo las paradas que aún no fueron visitadas
-function filterPendingStops(stops, currentCoord, threshold = STOP_THRESHOLD_METERS) {
+const filterPendingStops = (stops, currentCoord, threshold = STOP_THRESHOLD_METERS) => {
   return stops.filter(stop => haversineDistance(stop.coord, currentCoord) > threshold);
 }
 
 // Obtiene el array de paradas a partir del recorrido, origen y destino elegidos
-function getIntermediateStops(citiesArray, citiesData, originID, destID) {
+const getIntermediateStops = (citiesArray, citiesData, originID, destID) => {
   if (!Array.isArray(citiesArray) || !citiesData) return [];
   const originIdx = citiesArray.findIndex(city => city.cityID === originID);
   const destIdx = citiesArray.findIndex(city => city.cityID === destID);
@@ -48,7 +48,7 @@ function getIntermediateStops(citiesArray, citiesData, originID, destID) {
 }
 
 // Esta función se usará para detener el tracking desde el task
-async function stopTrackingFromTask() {
+const stopTrackingFromTask = async () => {
   try {
     await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
     // Opcional: enviar una notificación local
@@ -105,7 +105,7 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
   }
 });
 
-export default function LocationScreen() {
+const LocationScreen = () => {
   const [cities, setCities] = useState({});
   const [origin, setOrigin] = useState('');
   const [originCoord, setOriginCoord] = useState('');
@@ -261,7 +261,7 @@ export default function LocationScreen() {
 
   const canShare = origin && destination && selectedSchedule;
 
-  async function showLocationTrackingNotification() {
+  const showLocationTrackingNotification = async () => {
     try {
       await Notifications.scheduleNotificationAsync({
         content: {
@@ -344,7 +344,7 @@ export default function LocationScreen() {
   const stopBackgroundTracking = async () => {
     await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
     setTracking(false);
-    setIsTracking(false); 
+    setIsTracking(false);
     setModalMsg('Dejaste de compartir tu ubicación.');
     setModalVisible(true);
   };
@@ -440,6 +440,8 @@ export default function LocationScreen() {
   );
 }
 
+
+export default LocationScreen;
 const styles = StyleSheet.create({
   bg: {
     flex: 1,

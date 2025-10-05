@@ -18,7 +18,7 @@ const TimeScreen = () => {
 
   // Cargar ciudades
   useEffect(() => {
-    const citiesRef = ref(db, 'Cities');
+    const citiesRef = ref(db, 'city');
     get(citiesRef)
       .then(snapshot => {
         const data = snapshot.val();
@@ -41,7 +41,7 @@ const TimeScreen = () => {
       setSelectSchedule([]);
       return;
     }
-    const recorridosRef = ref(db, 'Recorridos');
+    const recorridosRef = ref(db, 'route');
     get(recorridosRef).then(snapshot => {
       const data = snapshot.val();
       const availableDestinationsList = [];

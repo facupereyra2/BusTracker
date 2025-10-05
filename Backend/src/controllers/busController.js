@@ -62,14 +62,14 @@ export const obtenerTiempoEstimado = async (req, res) => {
   }
 
   // --- Chequeo de antigüedad de la ubicación compartida ---
-  const ubicacionDate = DateTime.fromMillis(Number(locationObj.date));
-  const ahora = DateTime.utc();
-  const diferenciaHoras = ahora.diff(ubicacionDate, 'hours').hours;
+  const ubicationDate = DateTime.fromMillis(Number(locationObj.date));
+  const now = DateTime.utc();
+  const hoursDiff = now.diff(ubicationDate, 'hours').hours;
 
-  if (diferenciaHoras >= 3) {
+  if (hoursDiff >= 3) {
     return res.json({ error: true, texto: "No es posible informar el tiempo porque la última ubicación compartida es muy vieja (más de 3 horas)." });
   }
-  if (diferenciaHoras < 0) {
+  if (hoursDiff < 0) {
     return res.json({ error: true, texto: "La fecha de la ubicación compartida parece ser del futuro. Verifica el reloj del dispositivo." });
   }
 
@@ -208,7 +208,6 @@ export const obtenerTiempoEstimado = async (req, res) => {
 
   // --- Google Maps API ---
   const date = new Date();
-  date.setMinutes(date.getMinutes() + 5);
 
   const requestBody = {
     origin: { location: { latLng: { latitude: busCoord.lat, longitude: busCoord.lng } } },
@@ -243,10 +242,11 @@ export const obtenerTiempoEstimado = async (req, res) => {
     }
 
     // --- Clima ---
+    const apiKeyWeather = 'd3918607c24dc94a2dd83e3a36f7bd3c'; // API Key de OpenWeatherMap
     let weather = 'Sin datos';
     let visibility = '-';
     try {
-      const clima = await axios.get(`https://api.openweathermap.org/data/2.5/weather?lat=${busCoord.lat}&lon=${busCoord.lng}&appid=d3918607c24dc94a2dd83e3a36f7bd3c&units=metric&lang=es`);
+      const clima = await axios.get(`https://api.openweathermap.org/data/2.5/weather?lat=${busCoord.lat}&lon=${busCoord.lng}&appid=${apiKeyWeather}&units=metric&lang=es`);
       weather = clima.data?.weather?.[0]?.main || 'Sin datos';
       visibility = clima.data?.visibility || '-';
     } catch (climaErr) {
