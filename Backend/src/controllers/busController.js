@@ -287,7 +287,7 @@ export const obtenerTiempoEstimado = async (req, res) => {
     const estimatedArrival = DateTime.utc().plus({ minutes: totalMin }).setZone('America/Argentina/Buenos_Aires');
     const horaEstimada = estimatedArrival.toFormat('HH:mm') + " hs";
 
-    const formattedDate = ubicacionDate.setZone('America/Argentina/Buenos_Aires').toLocaleString(DateTime.DATETIME_FULL, { locale: 'es' });
+    const formattedDate = ubicationDate.setZone('America/Argentina/Buenos_Aires').toLocaleString(DateTime.DATETIME_FULL, { locale: 'es' });
 
     return res.json({
       tiempo: `${horas}h ${min}m`,

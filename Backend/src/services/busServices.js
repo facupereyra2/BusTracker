@@ -1,7 +1,6 @@
 // services/colectivo.service.js
 import { get, ref } from 'firebase/database';
 import { db } from '../firebase/config.js';
-import { distanceCalc } from '../utils/distance.js';
 
 export const getLocation = async (recorrido) => {
   const locRef = ref(db, `location/${recorrido}`);
